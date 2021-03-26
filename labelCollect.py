@@ -37,11 +37,11 @@ labels_exist = False
 prediction_conf = {
     # GIVE MODEL TO USE:
     # Give model names in tuple, e.g. "sd_models": ("stardist_10x", "GFP")
-    "sd_models": ("GFP"),       # ("stardist_10x", "GFP"), ("stardist_new"),
+    "sd_models": "GFP",       # ("stardist_10x", "GFP"), ("stardist_new"),
 
     # Channel position of the channel to predict. Set to None if images have only one channel. Starts from zero.
     # If multiple channels, the numbers must be given in same order as sd_models, e.g. (1, 0)
-    "prediction_chs": (0),      # (1, 0)
+    "prediction_chs": 0,      # (1, 0)
 
     # Set True if whole-gut images
     "predict_big": True,
@@ -60,8 +60,8 @@ prediction_conf = {
 
     # FOR PREDICT_BIG ##################
     # Image slicing, i.e. block size
-    "long_division": 4,    # Block number on the longer axis
-    "short_division": 3,    # Block number on the shorter axis
+    "long_division": 3,    # Block number on the longer axis
+    "short_division": 2,    # Block number on the shorter axis
 
     # voxel overlap and context of image blocks for X and Y axes. Values for Z-axis are defined automatically in
     # function predict() of class PredictObjects that can be found below.
@@ -205,10 +205,10 @@ class CollectLabelData:
     def save(self, out_path: pl.Path, label_name: str, lam_compatible: bool = True, round: (int, bool) = 4) -> None:
         """Save the output DataFrame."""
         if lam_compatible:
-            dirpath = out_path.joinpath(label_name.split("_Ch=")[0], label_name.split(".labels")[0])
-            dirpath.mkdir(exist_ok=True, parents=True)
             file = "Positions.csv"
-            savepath = dirpath.joinpath(file)
+            name_parts = label_name.split("_Ch=")
+            savepath = out_path.joinpath(name_parts[0], f"Ch{name_parts[1]}", file)
+            savepath.parent.mkdir(exist_ok=True, parents=True)
             data = self.lam_output()
         else:
             file = f"{label_name}.csv"
@@ -398,7 +398,6 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, pred_conf: dict 
 
         # Prediction:
         if not labels_exist:
-            print(f"GPUtools available:     {gputools_available()}\n")
             predictor = PredictObjects(images, return_details=True, **pred_conf)
             details = predictor(output_path=label_path)
 
@@ -413,8 +412,8 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, pred_conf: dict 
             print(label_data().describe().round(decimals=3), "\n")
 
             # Save data:
-            save_path = pl.Path(out_path).joinpath(pl.Path(label_file).stem + ".csv")
-            label_data.save(out_path=pl.Path(out_path), label_name=pl.Path(label_file).stem,
+            # save_path = pl.Path(out_path).joinpath(pl.Path(label_file).replace() + ".csv")
+            label_data.save(out_path=pl.Path(out_path), label_name=pl.Path(label_file).stem.split(".labels")[0],
                             lam_compatible=create_lam_output)
 
 
