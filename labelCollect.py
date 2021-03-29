@@ -205,9 +205,9 @@ class CollectLabelData:
     def save(self, out_path: pl.Path, label_name: str, lam_compatible: bool = True, round: (int, bool) = 4) -> None:
         """Save the output DataFrame."""
         if lam_compatible:
-            file = "Positions.csv"
+            file = "Position.csv"
             name_parts = label_name.split("_Ch=")
-            savepath = out_path.joinpath(name_parts[0], f"Ch{name_parts[1]}", file)
+            savepath = out_path.joinpath(name_parts[0], f"Ch{name_parts[1]}_Statistics", file)
             savepath.parent.mkdir(exist_ok=True, parents=True)
             data = self.lam_output()
         else:
