@@ -1,9 +1,16 @@
 //1st tiffs folder. REPLACE BACKSLASHES
 Path1 = '//ad.helsinki.fi/home/j/jgeorge/Desktop/1_first_tiffs'
+
 // 2nd tiffs folder
 Path2 = '//ad.helsinki.fi/home/j/jgeorge/Desktop/2_second_tiffs'
+
 // Write save path you want to save final tiffs in.
 Savpath = '//ad.helsinki.fi/home/j/jgeorge/Desktop/3_saved'
+
+// Give label file extension, e.g. image's name + the extension: "_Ch=0.labels.tif"
+labelExt = '.tif'
+
+
 
 list = getFileList(Path1);
 //print(Path1);
