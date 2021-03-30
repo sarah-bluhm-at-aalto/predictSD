@@ -1,4 +1,6 @@
-//1st tiffs folder. REPLACE BACKSLASHES
+// N.B. Make sure paths contain FORWARDSLASHES and not BACKSLASHES
+
+//1st tiffs folder. 
 Path1 = 'E:/Duuni/StarDist_Annotation/newnewImg/omat'
 
 // 2nd tiffs folder
@@ -9,8 +11,6 @@ Savpath = 'E:/Duuni/StarDist_Annotation/newnewImg/omat/comp'
 
 // Give label file extension, e.g. image's name + the extension: "_Ch=0.labels.tif"
 labelExt = '.tif'
-
-
 
 list = getFileList(Path1);
 //print(Path1);
@@ -37,8 +37,9 @@ for (i = 0; i <list.length; i++) {
 		run("Z Project...", "projection=[Average Intensity]");
 		
 		selectWindow(FileTitle1);
+		// Change if you want e.g DAPI (duplicate channels=2) or GFP (Duplicate channels=1)
 		run("Duplicate...", "duplicate channels=1");
-		//Keep GFP and z project
+		//Keep single channel (GFP or DAPI) and z project
 		run("Z Project...", "projection=[Average Intensity]");
 		zPGFP=getTitle();
 		selectWindow(FileTitle2);
