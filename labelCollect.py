@@ -2,7 +2,7 @@ from __future__ import print_function, unicode_literals, absolute_import, divisi
 import sys
 import os
 from glob import glob
-from math import ceil
+from math import ceil, floor
 # from re import sub
 
 import numpy as np
@@ -207,7 +207,7 @@ class CollectLabelData:
         if lam_compatible:
             file = "Position.csv"
             name_parts = label_name.split("_Ch=")
-            savepath = out_path.joinpath(name_parts[0], f"Ch{name_parts[1]}_Statistics", file)
+            savepath = out_path.joinpath(name_parts[0], f"StarDist_Ch{name_parts[1]}_Statistics", file)
             savepath.parent.mkdir(exist_ok=True, parents=True)
             data = self.lam_output()
         else:
@@ -257,8 +257,8 @@ class PredictObjects:
             labels, details = self.read_model(model_and_ch_nro[0]).predict_instances_big(
                 img, axes="ZYX",
                 block_size=(z_size, y_size, x_size),
-                min_overlap=(z_size - 1, overlap, overlap),
-                context=(0, context, context),
+                min_overlap=(floor(z_size * 0.5), overlap, overlap),
+                context=(floor(z_size * 0.2), context, context),
                 prob_thresh=self.probability,
                 nms_thresh=self.nms
                 # n_tiles=(2, 2, 2)
