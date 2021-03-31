@@ -250,15 +250,15 @@ class PredictObjects:
         if self.predict_big:
             # Define block size:
             z_size, y_size, x_size = self.define_dims(img.shape)
-            overlap = self.conf.get("overlap")
+            overlap, context = self.conf.get("overlap"), self.conf.get("context")
 
             print(f"z_size={z_size}, y_size={y_size}, x_size={x_size}")
 
             labels, details = self.read_model(model_and_ch_nro[0]).predict_instances_big(
                 img, axes="ZYX",
                 block_size=(z_size, y_size, x_size),
-                min_overlap=(2, overlap, overlap),
-                context=(0, 32, 32),
+                min_overlap=(z_size - 1, overlap, overlap),
+                context=(0, context, context),
                 prob_thresh=self.probability,
                 nms_thresh=self.nms
                 # n_tiles=(2, 2, 2)
