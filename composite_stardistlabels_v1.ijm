@@ -1,25 +1,32 @@
 // N.B. Make sure paths contain FORWARDSLASHES and not BACKSLASHES
 
-//1st tiffs folder. 
-Path1 = 'E:/Duuni/StarDist_Annotation/newnewImg/omat'
+//1st tiffs folder. Original tiffs. 
+Path1 = 'G:/010421/PROCESSED_TIFFS'
 
-// 2nd tiffs folder
-Path2 = 'E:/Duuni/StarDist_Annotation/newnewImg/omat/masks'
+//2nd tiffs folder (labels).
+Path2 = 'G:/010421/labels'
 
 // Write save path you want to save final tiffs in.
-Savpath = 'E:/Duuni/StarDist_Annotation/newnewImg/omat/comp'
+Savpath = 'G:/010421/Label overlays/GFP'
 
-// Give label file extension, e.g. image's name + the extension: "_Ch=0.labels.tif"
-labelExt = '.tif'
+// Add the label channel number you want to overlay e.g. Ch0 = 0 (usually GFP), Ch1 = 1 (Usually DAPI)
+labChannel = 0
+
+// Label file extension, e.g. image's name + the extension: "_Ch=0.labels.tif"
+labelExt = '_Ch='+labChannel+'.labels.tif'
+print(labelExt)
+
+// Creates the number of the channel from the original tiff which will be duplicated below
+dupNumber = labChannel + 1
 
 list = getFileList(Path1);
-//print(Path1);
 
+
+setBatchMode(true);
 for (i = 0; i <list.length; i++) {
 	print(list[i]);
 	if(endsWith(list[i], ".tif") | endsWith(list[i], ".tiff")) {
 		path = Path1 +"/"+ list[i];
-		//print(path);
 		open(path);
 		FileTitle1=getTitle();
 
@@ -33,12 +40,11 @@ for (i = 0; i <list.length; i++) {
 		open(P2tiff);
 		run("Enhance Contrast", "saturated=0.35");
 		FileTitle2=getTitle();
-		
 		run("Z Project...", "projection=[Average Intensity]");
 		
 		selectWindow(FileTitle1);
 		// Change if you want e.g DAPI (duplicate channels=2) or GFP (Duplicate channels=1)
-		run("Duplicate...", "duplicate channels=1");
+		run("Duplicate...", "duplicate channels="+dupNumber+"");
 		//Keep single channel (GFP or DAPI) and z project
 		run("Z Project...", "projection=[Average Intensity]");
 		zPGFP=getTitle();
@@ -52,9 +58,9 @@ for (i = 0; i <list.length; i++) {
 		Stack.setChannel(2);
 		run("glasbey_inverted");
 		Stack.setDisplayMode("composite");
-		savnam = Savpath + "/" + FileTitle1;
+		savnam = Savpath + "/" + FileTitle1ext + '_Ch'+labChannel+'_overlay';
 		//print(savnam);
 		save(savnam);
-		run("Close All");
+		close("*");
 	}
 }
