@@ -2,25 +2,25 @@ from __future__ import print_function, unicode_literals, absolute_import, divisi
 import sys
 import os
 from glob import glob
-from math import ceil, floor
+# from math import ceil, floor
 # from re import sub
 
 import numpy as np
 import pandas as pd
 import pathlib as pl
 import matplotlib.pyplot as plt
-from tifffile import imread, imwrite
+from tifffile import TiffFile, imread
 
 from csbdeep.utils import normalize
 from csbdeep.io import save_tiff_imagej_compatible
-from stardist import random_label_cmap, gputools_available
+from stardist import random_label_cmap
 from stardist.models import StarDist3D
 
 # INPUT/OUTPUT PATHS
 # ------------------
-image_path = r'D:\stardist_gfp_testset'
-label_path = r'D:\stardist_gfp_testset\labels'
-output_path = r'D:\stardist_gfp_testset\results'
+image_path = r'E:\Duuni\StarDist_Annotation\full_images'
+label_path = r'E:\Duuni\StarDist_Annotation\full_images\masks'
+output_path = r'E:\Duuni\StarDist_Annotation\full_images\results'
 
 # Whether to save label data in LAM-compatible format and folder hierarchy
 # This expects that the images are named in a compatible manner, i.e. "samplegroup_samplename.tif"
@@ -52,21 +52,28 @@ prediction_conf = {
 
     # PREDICTION VARIABLES ("None" for default values of training):
     # [0-1 ; None] Non-maximum suppression, see: https://towardsdatascience.com/non-maximum-suppression-nms-93ce178e177c
-    "nms_threshold": 0.35,
+    "nms_threshold": None,
 
     # [0-1 ; None] Probability threshold, decrease if too few objects found, increase if  too many
-    "probability_threshold": 0.45,
+    "probability_threshold": None,
     # ----------------------------------------------------------------
 
     # FOR PREDICT_BIG ##################
+    # Splitting of image into segments along z, y, and x axes. Long_div and short_div split the longer and shorter axis
+    # of X and Y axes, respectively. The given number indicates how many splits are performed on the given axis.
+    "z_div": 1,
+    "long_div": 2,  # Block number on the longer axis
+    "short_div": 2,  # Block number on the shorter axis
+
+    # DEPRECATED BELOW (do not use)
     # Image slicing, i.e. block size
-    "long_division": 3,    # Block number on the longer axis
-    "short_division": 2,    # Block number on the shorter axis
+    # "long_division": 3,    # Block number on the longer axis
+    # "short_division": 2,    # Block number on the shorter axis
 
     # voxel overlap and context of image blocks for X and Y axes. Values for Z-axis are defined automatically in
     # function predict() of class PredictObjects that can be found below.
-    "overlap": 64,
-    "context": 32
+    # "overlap": 64,
+    # "context": 32
     # NOTE: StarDist requires that: 0 <= overlap + 2*context < block_size <= image_size
     # -> if image has ZYX dimensions (10, 1024, 1024) and is divided into two blocks on both X and Y axes, the resulting
     # blocks of size (10, 512, 512) require that (overlap + 2*context) is smaller than 512 on both X and Y, and smaller
@@ -82,7 +89,8 @@ class ImageData:
 
     def __init__(self, path_to_image: str, dimensions: tuple, paths_to_labels: (list, None) = None) -> None:
         self.name = pl.Path(path_to_image).stem
-        self.image = path_to_image
+        # self.image = path_to_image
+        self.image = ImageFile(path_to_image)
         self.label_paths = [] if paths_to_labels is None else paths_to_labels
         self.labels = None if paths_to_labels is None else paths_to_labels[0]
         self.voxel_dims = dimensions
@@ -90,38 +98,6 @@ class ImageData:
 
         if self.labels is not None:
             self.test_img_shapes()
-
-    @property
-    def image(self) -> np.ndarray:
-        """Return image and determine if multichannel."""
-        img = imread(self._image)
-        # Check if channel dimension exists
-        if img.ndim == 4:
-            self.channels = img.shape[1]  # Get number of channels
-        return img
-
-    @image.setter
-    def image(self, path: (str, pl.Path)):
-        """Set path to image."""
-        self._image = pl.Path(path)
-
-    @property
-    def labels(self) -> np.ndarray:
-        """Return label image."""
-        if self._labels is not None:
-            return imread(self._labels)
-        return None
-        # else:
-        #     raise MissingLabelsError(self.name)
-
-    @labels.setter
-    def labels(self, path: (str, pl.Path)):
-        """Set path to label image."""
-        if path is not None:
-            self._labels = pl.Path(path)
-            self.test_img_shapes()
-        else:
-            self._labels = None
 
     def get_channel(self, channel):
         """Get specific channel from a multichannel image."""
@@ -156,6 +132,47 @@ class ImageData:
         if not self.labels.shape == tuple(map(self.image.shape.__getitem__, [0, -2, -1])):
             print(f"{self.name}\n    img: {self.image.shape}  ;  labels: {self.labels.shape}")
             raise ShapeMismatchError
+        # ImageWidth, ImageLength, channels
+
+
+class ImageFile(ImageData):
+
+    def __init__(self, filepath, labelfile=False):
+        self.img = filepath
+        self.name = pl.Path(filepath).stem
+        self.is_label = labelfile
+        self._define_variables(filepath)
+
+    @property
+    def img(self) -> np.ndarray:
+        """Read image."""
+        return imread(self._image)
+
+    @img.setter
+    def img(self, path: (str, pl.Path)):
+        """Set path to image."""
+        self._img = pl.Path(path)
+
+    def _define_variables(self, filepath):
+        def _get_tag(tag):
+            try:
+                return tif.pages[0].tags.get(tag).value
+            except AttributeError:
+                return None
+
+        with TiffFile(filepath) as tif:
+            if tif.series[0].axes != 'ZCYX':
+                msg = f"Image axes order '{tif.series[0].axes}' differs from the required 'ZCYX'."
+                raise AxesOrderError(image_name=self.name, message=msg)
+            self.channels = _get_tag("channels")
+            self.voxel_dims = (_get_tag("slices"), _get_tag("YResolution"), _get_tag("XResolution"))
+
+    def get_channel(self, channel):
+        """Get specific channel from a multichannel image."""
+        if self.channels is not None:
+            return self.image[:, channel, :, :]
+        print("INFO: Image has only one channel.")
+        return self.image
 
 
 class CollectLabelData:
@@ -225,9 +242,7 @@ class PredictObjects:
     def __init__(self, images: ImageData, **pred_conf) -> None:
         self.images = images
         self.conf = pred_conf
-        self.probability = self.conf.get("probability_threshold")
-        self.nms = self.conf.get("nms_threshold")
-        self.predict_big = self.conf.get("predict_big")
+
         # Create list of model/channel pairs to use
         if isinstance(self.conf.get("sd_models"), tuple) and isinstance(self.conf.get("prediction_chs"), tuple):
             self.model_list = [*zip(self.conf.get("sd_models"), self.conf.get("prediction_chs"))]
@@ -247,28 +262,18 @@ class PredictObjects:
         print(f"\n{self.images.name}; Model = {model_and_ch_nro[0]} ; Image dims = {img.shape}")
 
         # Perform prediction:
-        if self.predict_big:
-            # Define block size:
-            z_size, y_size, x_size = self.define_dims(img.shape)
-            overlap, context = self.conf.get("overlap"), self.conf.get("context")
-
-            print(f"z_size={z_size}, y_size={y_size}, x_size={x_size}")
-
-            labels, details = self.read_model(model_and_ch_nro[0]).predict_instances_big(
-                img, axes="ZYX",
-                block_size=(z_size, y_size, x_size),
-                min_overlap=(floor(z_size * 0.5), overlap, overlap),
-                context=(floor(z_size * 0.2), context, context),
-                prob_thresh=self.probability,
-                nms_thresh=self.nms
-                # n_tiles=(2, 2, 2)
-            )
+        if self.conf.get("predict_big"):
+            n_tiles = self.define_tiles(img.shape)
         else:
-            labels, details = self.read_model(model_and_ch_nro[0]).predict_instances(
-                img, axes="ZYX",
-                prob_thresh=self.probability,
-                nms_thresh=self.nms
-            )
+            n_tiles = None
+
+        # Run prediction
+        labels, details = self.read_model(model_and_ch_nro[0]).predict_instances(
+            img, axes="ZYX",
+            prob_thresh=self.conf.get("probability_threshold"),
+            nms_thresh=self.conf.get("nms_threshold"),
+            n_tiles=n_tiles
+        )
 
         # Define save paths:
         save_path = pl.Path(output_path)
@@ -289,18 +294,14 @@ class PredictObjects:
         with HidePrint():
             return StarDist3D(None, name=model_name, basedir='models')
 
-    def define_dims(self, dims):
-        z_size = dims[0]
-        y, x, overlap = dims[-2], dims[-1], self.conf.get("overlap")
+    def define_tiles(self, dims):
+        y, x = dims[-2], dims[-1]
 
-        if y >= x:  # if y-axis is longer
-            y_size = int(8 * ceil(y / self.conf.get("long_division") / 8.)) + (2 * overlap)
-            x_size = int(8 * ceil(x / self.conf.get("short_division") / 8.)) + (2 * overlap)
-            return z_size, y_size, x_size
+        # return splitting counts of each axis:
+        if y >= x: # If y-axis is longer than x
+            return (self.conf.get("z_div"), self.conf.get("long_div"), self.conf.get("short_div"))
         # If y-axis is shorter
-        y_size = int(8 * ceil(y / self.conf.get("short_division") / 8.)) + (2 * overlap)
-        x_size = int(8 * ceil(x / self.conf.get("long_division") / 8.)) + (2 * overlap)
-        return z_size, y_size, x_size
+        return (self.conf.get("z_div"), self.conf.get("short_div"), self.conf.get("long_div"))
 
     def label_plot(self, save_path, img,  labels):
         # color map:
@@ -348,6 +349,18 @@ class MissingLabelsError(Exception):
     """Exception raised when trying to get a non-defined label image."""
 
     def __init__(self, image_name, message=f"Label file not defined"):
+        self.name = image_name
+        self.message = message
+        super().__init__(self.message)
+
+    def __str__(self):
+        return f"{self.name} -> {self.message}"
+
+
+class AxesOrderError(Exception):
+    """Exception raised when trying to get a non-defined label image."""
+
+    def __init__(self, image_name, message=f"Image axes order is wrong; ZCYX is required."):
         self.name = image_name
         self.message = message
         super().__init__(self.message)
