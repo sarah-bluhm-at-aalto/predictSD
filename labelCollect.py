@@ -10,6 +10,7 @@ import pathlib as pl
 from tifffile import TiffFile, imread, imwrite
 
 from csbdeep.utils import normalize
+from csbdeep.io import save_tiff_imagej_compatible
 from stardist.models import StarDist3D
 
 
@@ -39,14 +40,14 @@ force_voxel_size = None  # 10x=(8.2000000, 0.6500002, 0.6500002); 20x=(3.4, 0.32
 prediction_conf = {
     # GIVE MODEL TO USE:
     # Give model names in tuple, e.g. "sd_models": ("stardist_10x", "GFP")
-    "sd_models": "GFP10x",
+    "sd_models": ("GFP10x", "DAPI10x"),
 
     # Channel position of the channel to predict. Set to None if images have only one channel. Starts from zero.
     # If multiple channels, the numbers must be given in same order as sd_models, e.g. (1, 0)
-    "prediction_chs": 0,      # (1, 0)
+    "prediction_chs": (0, 1),      # (1, 0)
 
     # Set True if predicting from large images
-    "predict_big": False,
+    "predict_big": True,
 
     # PREDICTION VARIABLES ("None" for default values of training):
     # [0-1 ; None] Non-maximum suppression, see: https://towardsdatascience.com/non-maximum-suppression-nms-93ce178e177c
@@ -60,11 +61,11 @@ prediction_conf = {
     # Splitting of image into segments along z, y, and x axes. Long_div and short_div split the longer and shorter axis
     # of X and Y axes, respectively. The given number indicates how many splits are performed on the given axis.
     "z_div": 1,
-    "long_div": 2,  # Block number on the longer axis
+    "long_div": 4,  # Block number on the longer axis
     "short_div": 2,  # Block number on the shorter axis
 
-    # imagej_path = pl.Path(glob(r"C:\hyapp\ImageJ*")[0]).joinpath("\Fiji.app\ImageJ-win64.exe")
-    "imagej_path": r'E:\Ohjelmat\Fiji.app\ImageJ-win64.exe',
+    "imagej_path": pl.Path(glob(r"C:\hyapp\fiji-win64*")[0]).joinpath("Fiji.app\ImageJ-win64.exe")
+    # "imagej_path": r'E:\Ohjelmat\Fiji.app\ImageJ-win64.exe',
 
 
     # DEPRECATED BELOW (do not use)
@@ -149,6 +150,7 @@ class ImageFile:
         self.name = pl.Path(self.path).stem
         self.is_label = is_label
         self.shape = None
+        self.datatype = None
         self.channels = None
         self.voxel_dims = force_dims
         self._define_variables(self.path)
@@ -164,25 +166,22 @@ class ImageFile:
         self._img = pl.Path(path)
 
     def _define_variables(self, filepath: [str, pl.Path]) -> None:
-        def _get_tag(tag: str):
-            try:
-                return tif.pages[0].tags.get(tag).value
-            except AttributeError:
-                return None
-
+        """Define relevant variables based on image properties and metadata."""
         with TiffFile(filepath) as tif:
             self._test_ax_order(tif.series[0].axes)  # Confirm correct axis order
             self.shape = tif.series[0].shape
+            #self.datatype = get_tiff_dtype(str(tif.series[0].dtype))
             try:  # Read channel number of image
                 self.channels = tif.imagej_metadata.get('channels')
             except AttributeError:
                 self.channels = None
-            # self.bits = _get_tag("BitsPerSample")
+            # self.bits = _get_tag(tif, "BitsPerSample")
 
             # Find micron sizes of voxels
             if not self.is_label and self.voxel_dims is None:
                 self.voxel_dims = self._find_voxel_dims(tif.imagej_metadata.get('spacing'),
-                                                        _get_tag("YResolution"), _get_tag("XResolution"))
+                                                        _get_tag(tif, "YResolution"),
+                                                        _get_tag(tif, "XResolution"))
 
     def _find_voxel_dims(self, z_space: [None, float], y_res: [None, tuple], x_res: [None, tuple]) -> tuple:
         """Transform image axis resolutions to voxel dimensions."""
@@ -205,11 +204,6 @@ class ImageFile:
         if self.channels is not None and self.channels > 1:
             return self.img[:, channel, :, :]
         return self.img
-
-    def get_type(self) -> np.dtype:
-        """Get dtype of image."""
-        temp = self.img
-        return temp.dtype
 
 
 class CollectLabelData:
@@ -296,7 +290,7 @@ class PredictObjects:
         if return_details:
             return out_details
 
-    def predict(self, model_and_ch_nro: tuple, output_path: str = label_path, make_plot: bool = False,
+    def predict(self, model_and_ch_nro: tuple, output_path: str = label_path, make_plot: bool = True,
                 n_tiles: int = None) -> (np.ndarray, dict):
         img = normalize(self.image.get_channel(model_and_ch_nro[1]), 1, 99.8, axis=(0, 1, 2))
         print(f"\n{self.image.name}; Model = {model_and_ch_nro[0]} ; Image dims = {self.image.shape}")
@@ -314,23 +308,22 @@ class PredictObjects:
         )
 
         # Define save paths:
-        save_path = pl.Path(output_path)
         file_stem = f'{self.name}_Ch={model_and_ch_nro[1]}'
-        save_label = save_path.joinpath(f'{file_stem}.labels.tif')
+        save_label = pl.Path(output_path).joinpath(f'{file_stem}.labels.tif')
 
         # Save the label image:
-        imwrite(save_label, labels, shape=labels.shape, dtype=labels.dtype,
-                kwargs={"imagej": True,
-                        "resolution": (1. / self.image.voxel_dims[1], 1. / self.image.voxel_dims[2]),
-                        "metadata": {'spacing': self.image.voxel_dims[0], 'unit': 'um', 'axes': 'ZYX'}})
+        save_tiff_imagej_compatible(save_label, labels.astype('int16'), axes='ZYX', **{"imagej": True,
+                   "resolution": (1. / self.image.voxel_dims[1], 1. / self.image.voxel_dims[2]),
+                   "metadata": {'spacing': self.image.voxel_dims[0]}})
 
         # Add path to label paths
         if save_label not in self.label_paths:
             self.label_paths.append(save_label)
 
         if make_plot:  # Create and save overlay tif of the labels
-            overlay_images(save_path.joinpath(f'{file_stem}.overlay.tif'), self.image.path, save_label,
-                           self.conf.get("imagej_path"))
+            overlay_images(pl.Path(output_path).joinpath(f'overlay_{file_stem}.tif'),
+                           self.image.path, save_label, self.conf.get("imagej_path"),
+                           channel_n=model_and_ch_nro[1])
         return labels, details
 
     def define_tiles(self, dims) -> tuple:
@@ -402,6 +395,13 @@ def corresponding_imgs(file_name: str, target_path) -> str:
         print(" -> Assert that image files are named sample_name.labels.tif and sample_name.tif")
 
 
+def _get_tag(tif: TiffFile, tag: str):
+    try:
+        return tif.pages[0].tags.get(tag).value
+    except AttributeError:
+        return None
+
+
 def output_dirs(out_path: str, lbl_path: str) -> None:
     """Create result and label-file directories."""
     out_path = pl.Path(out_path)  # For calculated variables of objects
@@ -436,6 +436,12 @@ def overlay_images(save_path: [pl.Path, str], image_path: [pl.Path, str],  label
         subprocess.run(fiji_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
     except subprocess.CalledProcessError as err:
         print(err)
+
+
+def get_tiff_dtype(numpy_dtype: str) -> int:
+    """Get TIFF datatype of image."""
+    num = numpy_dtype.split('int')[-1]
+    return ['8', 'None', '16', '32'].index(num) + 1
 
 
 def collect_labels(img_path: str, lbl_path: str, out_path: str, pred_conf: dict = None,
@@ -478,10 +484,6 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, pred_conf: dict 
             # Print description of collected data
             print(f"Description of '{pl.Path(label_file).name}':")
             print(label_data().describe().round(decimals=3), "\n")
-
-            # REMOVE PLOTTING
-            # overlay_images(pl.Path(out_path).joinpath(f'{images.image.name}.overlay.tif'), images.image.path,
-            #                label_file, pred_conf.get("imagej_path"))
 
             # Save obtained data:
             label_data.save(out_path=pl.Path(out_path), label_name=pl.Path(label_file).stem.split(".labels")[0],
