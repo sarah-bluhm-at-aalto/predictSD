@@ -46,15 +46,16 @@ prediction_conf = {
     # If multiple channels, the numbers must be given in same order as sd_models, e.g. (1, 0)
     "prediction_chs": (0, 1),      # (1, 0)
 
-    # Set True if predicting from large images
+    # Set True if predicting from large images, e.g. whole midgut.
     "predict_big": True,
 
     # PREDICTION VARIABLES ("None" for default values of training):
+    # These variables are the primary way to influence label prediction.
     # [0-1 ; None] Non-maximum suppression, see: https://towardsdatascience.com/non-maximum-suppression-nms-93ce178e177c
     "nms_threshold": None,
-
     # [0-1 ; None] Probability threshold, decrease if too few objects found, increase if  too many
     "probability_threshold": None,
+    # The arguments above set values for ALL used models! If in need of finer tuning, edit config.json's within models
     # ----------------------------------------------------------------
 
     # FOR PREDICT_BIG ##################
@@ -65,6 +66,7 @@ prediction_conf = {
     "short_div": 2,  # Block number on the shorter axis
 
     # Path to ImageJ run-file (value below searches for exe-file on university computer)
+    # Set to None if image/label -overlay images are not required.
     "imagej_path": pl.Path(glob(r"C:\hyapp\fiji-win64*")[0]).joinpath(r"Fiji.app\ImageJ-win64.exe")
     # Alternatively, comment line above and give full path to run-file below:
     # "imagej_path": r'E:\Ohjelmat\Fiji.app\ImageJ-win64.exe',
@@ -297,7 +299,7 @@ class PredictObjects:
         if save_label not in self.label_paths:
             self.label_paths.append(save_label)
 
-        if make_plot:  # Create and save overlay tif of the labels
+        if make_plot and self.conf.get("imagej_path") is not None:  # Create and save overlay tif of the labels
             overlay_images(pl.Path(output_path).joinpath(f'overlay_{file_stem}.tif'),
                            self.image.path, save_label, self.conf.get("imagej_path"),
                            channel_n=model_and_ch_nro[1])
@@ -402,6 +404,11 @@ def overlay_images(save_path: [pl.Path, str], image_path: [pl.Path, str],  label
     # Find path to ImageJ macro for the image creation:
     file_dir = pl.Path(__file__).parent.absolute()
     macro_file = file_dir.joinpath("overlayLabels.ijm")
+
+    # Test that required files exist:
+    if not pl.Path(imagej_path).exists():
+        print("Path to ImageJ run-file is incorrect. Overlay-plots will not be created.")
+        return
     if not macro_file.exists():
         print("Label overlay plotting requires macro file 'overlayLabels.ijm'")
         return
@@ -418,7 +425,7 @@ def overlay_images(save_path: [pl.Path, str], image_path: [pl.Path, str],  label
 def get_tiff_dtype(numpy_dtype: str) -> int:
     """Get TIFF datatype of image."""
     num = numpy_dtype.split('int')[-1]
-    return ['8', 'None', '16', '32'].index(num) + 1
+    return ['8', 'placeholder', '16', '32'].index(num) + 1
 
 
 def collect_labels(img_path: str, lbl_path: str, out_path: str, pred_conf: dict = None,
