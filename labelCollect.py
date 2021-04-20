@@ -7,7 +7,7 @@ import subprocess
 import numpy as np
 import pandas as pd
 import pathlib as pl
-from tifffile import TiffFile, imread, imwrite
+from tifffile import TiffFile, imread
 
 from csbdeep.utils import normalize
 from csbdeep.io import save_tiff_imagej_compatible
@@ -64,25 +64,10 @@ prediction_conf = {
     "long_div": 4,  # Block number on the longer axis
     "short_div": 2,  # Block number on the shorter axis
 
-    "imagej_path": pl.Path(glob(r"C:\hyapp\fiji-win64*")[0]).joinpath("Fiji.app\ImageJ-win64.exe")
+    # Path to ImageJ run-file (value below searches for exe-file on university computer)
+    "imagej_path": pl.Path(glob(r"C:\hyapp\fiji-win64*")[0]).joinpath(r"Fiji.app\ImageJ-win64.exe")
+    # Alternatively, comment line above and give full path to run-file below:
     # "imagej_path": r'E:\Ohjelmat\Fiji.app\ImageJ-win64.exe',
-
-
-    # DEPRECATED BELOW (do not use)
-    # Voxel dimensions (READ FROM METADATA)
-    # ,  # 10x
-    # "sizeZYX": (3.4, 0.325, 0.325),  # 20x
-
-    # voxel overlap and context of image blocks for X and Y axes. Values for Z-axis are defined automatically in
-    # function predict() of class PredictObjects that can be found below.
-    # "overlap": 64,
-    # "context": 32
-    # NOTE: StarDist requires that: 0 <= overlap + 2*context < block_size <= image_size
-    # -> if image has ZYX dimensions (10, 1024, 1024) and is divided into two blocks on both X and Y axes, the resulting
-    # blocks of size (10, 512, 512) require that (overlap + 2*context) is smaller than 512 on both X and Y, and smaller
-    # than 10 on Z axis. If you need more control on overlap and context than the values above, you can give values for
-    # all axes by editing 'min_overlap' and 'context' arguments in predict_instances_big function call that can be found
-    # in PredictObjects.predict() below.
     ####################################
 }
 
@@ -131,14 +116,6 @@ class ImageData:
         if not self.labels.shape == tuple(map(self.image.shape.__getitem__, [0, -2, -1])):
             msg = f"Different image shapes. img: {self.image.shape}  ;  labels: {self.labels.shape}"
             raise ShapeMismatchError(image_name=self.image.name, message=msg)
-
-    # def test_img_bits(self):
-    #     if self.labels is None:
-    #         print("Label data has not been defined.")
-    #         return
-    #     if not self.labels.bits == self.image.bits:
-    #         print(f"{self.name}\n    img: {self.image.bits}  ;  labels: {self.labels.bits}")
-    #         raise ShapeMismatchError
 
 
 class ImageFile:
