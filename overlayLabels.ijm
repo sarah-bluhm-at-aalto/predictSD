@@ -7,7 +7,7 @@ chn = parseInt(argList[3]) + 1;
 open(argList[1]);
 run("Duplicate...", "duplicate channels="+chn+"");
 run("Enhance Contrast", "saturated=0.35");
-run("Z Project...", "projection=[Average Intensity]");
+run("Z Project...", "projection=[Max Intensity]");
 pImg=getTitle();
 
 // Flatten label image based on maximum intensity, i.e. largest label ID is drawn on top of smaller

@@ -30,7 +30,9 @@ Dmel midgut DAPI-stained nuclei. Trained with voxel ZYX-dimensions of (3.40 um, 
 Clarity.
 
 #### fatBody
-Dmel fat body cells. Trained with voxel ZYX-dimensions of (1.0404597 um, 0.4456326 um, 0.4456326 um).
+Dmel fat body cell DAPI staining. Trained with voxel ZYX-dimensions of (1.0404597 um, 0.4456326 um, 0.4456326 um).
+Imaged with Leica SP8 upright, 20x. The model has smaller cell size than normal and may not function optimally on images
+without the phenotype.
 
 #### GFP10x
 Dmel midgut progenitor esg-F/O lineage tracing. Trained with voxel ZYX-dimensions of (8.20 um, 0.650 um, 0.650 um).

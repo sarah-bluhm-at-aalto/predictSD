@@ -90,7 +90,7 @@ class ImageData:
     def _get_intensities(self, notnull) -> dict:
         """Read intensities of labelled voxels."""
         if self.image.channels is not None:
-            return {f"Intensity_Mean_Ch={ch}": self.image.get_channel(ch)[notnull]
+            return {f"Intensity Mean_Ch={ch}": self.image.get_channel(ch)[notnull]
                     for ch in np.arange(0, self.image.channels)}
         return {"Intensity": self.image.img[notnull]}
 
