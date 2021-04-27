@@ -4,6 +4,7 @@ import os
 from glob import glob
 import subprocess
 from copy import deepcopy
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -17,9 +18,9 @@ from stardist.models import StarDist3D
 
 # INPUT/OUTPUT PATHS
 # ------------------
-image_path = r'E:\label_test\images'
-label_path = r'E:\label_test\masks'
-output_path = r'E:\label_test\results'
+image_path = r'C:\Users\artoviit\StarDist_testing\testSet\images'
+label_path = r'C:\Users\artoviit\StarDist_testing\testSet\masks'
+output_path = r'C:\Users\artoviit\StarDist_testing\testSet\results'
 
 # Whether to save label data in LAM-compatible format and folder hierarchy
 # This expects that the images are named in a compatible manner, i.e. "samplegroup_samplename.tif"
@@ -31,7 +32,7 @@ coords_to_microns = True  # The voxel dimensions are read from metadata (see: Im
 
 # If labels already exist set to True. If False, the labels will be predicted based on microscopy images.
 # Otherwise only result tables will be constructed.
-labels_exist = False
+labels_exist = True
 
 # ZYX-axes voxel dimensions in microns. Size is by default read from image metadata.
 # KEEP AS None UNLESS SIZE METADATA IS MISSING. Dimensions are given as tuple, i.e. force_voxel_size=(Zdim, Ydim, Xdim)
@@ -78,7 +79,7 @@ prediction_conf = {
 class ImageData:
     """Handle image/label -pairs and find voxels of each object within."""
 
-    def __init__(self, path_to_image: str, paths_to_labels: (list, None) = None,
+    def __init__(self, path_to_image: str, paths_to_labels: ([str], None) = None,
                  voxel_dims: [None, tuple] = None) -> None:
         self.name = pl.Path(path_to_image).stem
         self.image = ImageFile(path_to_image, force_dims=voxel_dims)
@@ -124,13 +125,14 @@ class ImageData:
 class ImageFile:
     """Define a microscopy image or label image for analysis."""
 
-    def __init__(self, filepath, is_label=False, force_dims: [None, tuple] = None):
+    def __init__(self, filepath: [str, pl.Path], is_label=False, force_dims: [None, tuple] = None):
         self.path = filepath
-        self.img = self.path
         self.name = pl.Path(self.path).stem
+        self.img = self.path
         self.is_label = is_label
+        self.label_name = self.path
         self.shape = None
-        self.datatype = None
+        #self.datatype = None
         self.channels = None
         self.voxel_dims = force_dims
         self._define_variables(self.path)
@@ -145,23 +147,39 @@ class ImageFile:
         """Set path to image."""
         self._img = pl.Path(path)
 
+    @property
+    def label_name(self) -> str:
+        """Get label's channel name."""
+        if not self.is_label:
+            print("Image is not a label file and has no label name.")
+        return self._label_name
+
+    @label_name.setter
+    def label_name(self, filepath):
+        if self.is_label:
+            self._label_name = str(filepath).split(".labels")[0].split("_")[-1]
+        else:
+            self._label_name = None
+
     def _define_variables(self, filepath: [str, pl.Path]) -> None:
         """Define relevant variables based on image properties and metadata."""
-        with TiffFile(filepath) as tif:
-            self._test_ax_order(tif.series[0].axes)  # Confirm correct axis order
-            self.shape = tif.series[0].shape
-            #self.datatype = get_tiff_dtype(str(tif.series[0].dtype))
-            try:  # Read channel number of image
-                self.channels = tif.imagej_metadata.get('channels')
-            except AttributeError:
-                self.channels = None
-            # self.bits = _get_tag(tif, "BitsPerSample")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with TiffFile(filepath) as tif:
+                self._test_ax_order(tif.series[0].axes)  # Confirm correct axis order
+                self.shape = tif.series[0].shape
+                #self.datatype = get_tiff_dtype(str(tif.series[0].dtype))
+                try:  # Read channel number of image
+                    self.channels = tif.imagej_metadata.get('channels')
+                except AttributeError:
+                    self.channels = None
+                # self.bits = _get_tag(tif, "BitsPerSample")
 
-            # Find micron sizes of voxels
-            if not self.is_label and self.voxel_dims is None:
-                self.voxel_dims = self._find_voxel_dims(tif.imagej_metadata.get('spacing'),
-                                                        _get_tag(tif, "YResolution"),
-                                                        _get_tag(tif, "XResolution"))
+                # Find micron sizes of voxels
+                if not self.is_label and self.voxel_dims is None:
+                    self.voxel_dims = self._find_voxel_dims(tif.imagej_metadata.get('spacing'),
+                                                            _get_tag(tif, "YResolution"),
+                                                            _get_tag(tif, "XResolution"))
 
     def _find_voxel_dims(self, z_space: [None, float], y_res: [None, tuple], x_res: [None, tuple]) -> tuple:
         """Transform image axis resolutions to voxel dimensions."""
@@ -194,17 +212,17 @@ class CollectLabelData:
         self.ImageData = image_data
         self.coord_convert = convert_to_micron
         self.label_files = self.ImageData.label_paths if label_file is None else [label_file]
-        self.output = OutputData(self.label_files, label_names)
+        if label_names is None:
+            self.output = OutputData(self.label_files, label_names)
 
-    def __call__(self, save_data: bool = False, out_path: [str, pl.Path] = None, *args):
+    def __call__(self, save_data: bool = False, out_path: [str, pl.Path] = None, **kwargs):
         if save_data and out_path is None:
             print("WARNING: CollectLabelData.__call__() requires path to output-folder. Data not saved.")
             return
         for ind, label_file in enumerate(self.label_files):
-            self.output[ind] = self.read_labels(label_file=label_file)
+            self.read_labels(label_file=label_file)
             if save_data:
-                self.save(out_path, item=ind)
-
+                self.save(out_path, item=ind, **kwargs)
 
     def gather_data(self, label_file) -> (pd.DataFrame, None):
         """Get output DataFrame containing object values."""
@@ -248,9 +266,11 @@ class CollectLabelData:
     def save(self, out_path: [str, pl.Path], item: [int, str, pl.Path, pd.DataFrame] = 0, label_name: str = None,
              lam_compatible: bool = True, round_dec: (int, bool) = 5) -> None:
         """Save the output DataFrame."""
+        if isinstance(out_path, str):
+            out_path = pl.Path(out_path)
         if isinstance(item, int) or isinstance(item, str) or isinstance(item, pl.Path):
             object_label, _, data = self.output[item]
-            label_name = f"Ch-{object_label}" if label_name is None else label_name
+            label_name = f"{object_label}" if label_name is None else label_name
         else:
             data = item
         if lam_compatible:
@@ -261,7 +281,7 @@ class CollectLabelData:
             data = data.rename(columns={"X": "Position X", "Y": "Position Y", "Z": "Position Z", "Area_Max": "Area"})
             # data = self.output.lam_output()
         else:
-            file = f"{label_name}.csv"
+            file = f"{self.ImageData.name}_{label_name}.csv"
             save_path = out_path.joinpath(file)
         if round_dec is not False:
             data = data.round(decimals=round_dec)
@@ -272,12 +292,15 @@ class OutputData:
     """Hold label name, file, and data of output."""
 
     def __init__(self, label_paths, label_names: list = None):
-        self._label_files = label_paths
-        self._label_names = list(range(len(label_paths))) if label_names is None else label_names
+        self._label_files = [str(p) for p in label_paths]
+        l_range = [f"Ch{v}" for v in range(len(label_paths))]
+        self._label_names = l_range if label_names is None else label_names
         self._output = [None for item in label_paths]
         assert len(self._label_names) == len(self._output) == len(label_paths)
 
     def __setitem__(self, key, data):
+        if isinstance(key, str) or isinstance(key, pl.Path):
+            key = self._label_files.index(str(pl.Path(key)))
         self._output[key] = data
 
     def __getitem__(self, item: [int, str, pl.Path] = 0) -> [None, (str, str, pd.DataFrame)]:
@@ -293,9 +316,9 @@ class OutputData:
             print(f"Output data not found for {self._label_files[item]}.")
         return self._label_names[item], str(self._label_files[item]), self._output[item]
 
-    def lam_output(self, label_ind: int = 0) -> pd.DataFrame:
+    def lam_output(self, label_ind: int = 0) -> [None, pd.DataFrame]:
         output = self._output[label_ind]
-        if output is not None:
+        if isinstance(output, pd.DataFrame):
             return output.rename(columns={"X": "Position X", "Y": "Position Y", "Z": "Position Z", "Area_Max": "Area"})
         else:
             return None
@@ -304,8 +327,8 @@ class OutputData:
 class PredictObjects:
     """Predict objects in microscopy image using StarDist."""
     default_config = {
-        "sd_models": ("DAPI10x"),
-        "prediction_chs": (1),
+        "sd_models": "DAPI10x",
+        "prediction_chs": 1,
         "predict_big": False,
         "nms_threshold": None,
         "probability_threshold": None,
@@ -315,6 +338,7 @@ class PredictObjects:
     }
 
     def __init__(self, images: ImageData, **pred_conf) -> None:
+        # self.ImageData = images
         self.name = images.name
         self.image = images.image
         self.label_paths = images.label_paths
@@ -328,16 +352,16 @@ class PredictObjects:
         else:
             self.model_list = [(self.conf.get("sd_models"), self.conf.get("prediction_chs"))]
 
-    def __call__(self, return_details: bool = True, output_path: str = None, *args) -> [None, dict]:
+    def __call__(self, out_path: str, return_details: bool = True, **kwargs) -> [None, dict]:
         out_details = dict()
         for model_and_ch in self.model_list:
-            path, details = self.predict(model_and_ch_nro=model_and_ch, output_path=output_path, *args)
+            path, details = self.predict(model_and_ch_nro=model_and_ch, out_path=out_path, **kwargs)
             out_details[model_and_ch[0]] = (path, details)
         if return_details:
             return out_details
 
-    def predict(self, model_and_ch_nro: tuple, output_path: str = label_path, make_overlay: bool = True,
-                n_tiles: int = None, *args) -> (np.ndarray, dict):
+    def predict(self, model_and_ch_nro: tuple, out_path: str = label_path, make_overlay: bool = True,
+                n_tiles: int = None, overlay_path: str = None, **kwargs) -> (np.ndarray, dict):
         img = normalize(self.image.get_channel(model_and_ch_nro[1]), 1, 99.8, axis=(0, 1, 2))
         print(f"\n{self.image.name}; Model = {model_and_ch_nro[0]} ; Image dims = {self.image.shape}")
 
@@ -354,8 +378,8 @@ class PredictObjects:
         )
 
         # Define save paths:
-        file_stem = f'{self.name}_Ch={model_and_ch_nro[1]}'
-        save_label = pl.Path(output_path).joinpath(f'{file_stem}.labels.tif')
+        file_stem = f'{self.name}_{model_and_ch_nro[0]}'
+        save_label = pl.Path(out_path).joinpath(f'{file_stem}.labels.tif')
 
         # Save the label image:
         save_tiff_imagej_compatible(save_label, labels.astype('int16'), axes='ZYX', **{"imagej": True,
@@ -367,7 +391,8 @@ class PredictObjects:
             self.label_paths.append(save_label)
 
         if make_overlay and self.conf.get("imagej_path") is not None:  # Create and save overlay tif of the labels
-            overlay_images(pl.Path(output_path).joinpath(f'overlay_{file_stem}.tif'),
+            ov_save_path = overlay_path if overlay_path is not None else out_path
+            overlay_images(pl.Path(ov_save_path).joinpath(f'overlay_{file_stem}.tif'),
                            self.image.path, save_label, self.conf.get("imagej_path"),
                            channel_n=model_and_ch_nro[1])
         return labels, details
@@ -442,10 +467,12 @@ def corresponding_imgs(file_name: str, target_path) -> str:
 
 
 def _get_tag(tif: TiffFile, tag: str):
-    try:
-        return tif.pages[0].tags.get(tag).value
-    except AttributeError:
-        return None
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            return tif.pages[0].tags.get(tag).value
+        except AttributeError:
+            return None
 
 
 def output_dirs(out_path: str, lbl_path: str) -> None:
@@ -524,21 +551,27 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, pred_conf: dict 
         # Prediction:
         if not labels_exist:
             predictor = PredictObjects(images, return_details=True, **pred_conf)
-            details = predictor(output_path=label_path)
+            details = predictor(out_path=lbl_path, overlay_path=out_path)
 
         # Get information on label objects
-        for label_file in images.label_paths:
-            label_data = CollectLabelData(images, label_file=label_file, convert_to_micron=to_microns)
-            if label_data is None:
-                continue
+        # for label_file in images.label_paths:
+        label_data = CollectLabelData(images, convert_to_micron=to_microns)
+        label_data(out_path=out_path, lam_compatible=create_lam_output, save_data=True)
+        # if label_data is None:
+        #     continue
 
-            # Print description of collected data
-            print(f"Description of '{pl.Path(label_file).name}':")
-            print(label_data().describe().round(decimals=3), "\n")
+        # Print description of collected data
+        for data in label_data.output:
+            #print(f"Description of '{pl.Path(label_file).name}':")
+            print(data)
+        #print(f"Description of '{pl.Path(label_file).name}':")
+        #print(label_data(save_data=True, out_path=pl.Path(out_path),
+        #                 label_name=pl.Path(label_file).stem.split(".labels")[0],
+        #                lam_compatible=create_lam_output).describe().round(decimals=3), "\n")
 
-            # Save obtained data:
-            label_data.save(out_path=pl.Path(out_path), label_name=pl.Path(label_file).stem.split(".labels")[0],
-                            lam_compatible=create_lam_output)
+        # Save obtained data:
+        # label_data.save(out_path=pl.Path(out_path), label_name=pl.Path(label_file).stem.split(".labels")[0],
+        #                 lam_compatible=create_lam_output)
 
 
 if __name__ == "__main__":
