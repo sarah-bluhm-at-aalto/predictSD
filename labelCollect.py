@@ -3,6 +3,7 @@ import sys
 import os
 from glob import glob
 import subprocess
+from copy import deepcopy
 
 import numpy as np
 import pandas as pd
@@ -43,7 +44,7 @@ prediction_conf = {
     "sd_models": ("GFP10x", "DAPI10x"),
 
     # Channel position of the channel to predict. Set to None if images have only one channel. Starts from zero.
-    # If multiple channels, the numbers must be given in same order as sd_models, e.g. (1, 0)
+    # If multiple channels, the numbers must be given in same order as sd_models, e.g. (1, 0). Indexing starts from 0.
     "prediction_chs": (0, 1),      # (1, 0)
 
     # Set True if predicting from large images, e.g. whole midgut.
@@ -188,19 +189,29 @@ class ImageFile:
 class CollectLabelData:
     """Collect information on objects based on microscopy image and predicted labels."""
 
-    def __init__(self, image_data: ImageData, label_file: str = None, convert_to_micron: bool = True) -> None:
+    def __init__(self, image_data: ImageData, label_file: str = None, label_names: list = None,
+                 convert_to_micron: bool = True) -> None:
         self.ImageData = image_data
         self.coord_convert = convert_to_micron
-        self.output = self.gather_data(label_file)
+        self.label_files = self.ImageData.label_paths if label_file is None else [label_file]
+        self.output = OutputData(self.label_files, label_names)
 
-    def __call__(self):
-        return self.output
+    def __call__(self, save_data: bool = False, out_path: [str, pl.Path] = None, *args):
+        if save_data and out_path is None:
+            print("WARNING: CollectLabelData.__call__() requires path to output-folder. Data not saved.")
+            return
+        for ind, label_file in enumerate(self.label_files):
+            self.output[ind] = self.read_labels(label_file=label_file)
+            if save_data:
+                self.save(out_path, item=ind)
+
 
     def gather_data(self, label_file) -> (pd.DataFrame, None):
         """Get output DataFrame containing object values."""
         # Find mean coordinates and intensities of the labels
         voxel_data = self.ImageData.labelled_voxels(channel=label_file)
         if voxel_data is None:
+            print(f"WARNING: No labels found on {label_file}.")
             return None
         if self.coord_convert:
             cols = ("Z", "Y", "X")
@@ -225,35 +236,91 @@ class CollectLabelData:
         grouped_voxels = voxel_data.groupby("ID")
         return grouped_voxels.size() * np.prod(self.ImageData.voxel_dims)
 
-    def lam_output(self) -> pd.DataFrame:
-        """Transform output DataFrame into LAM-compatible format."""
-        return self.output.rename(columns={"X": "Position X", "Y": "Position Y", "Z": "Position Z", "Area_Max": "Area"})
+    def read_labels(self, label_file: [str, pl.Path] = None):
+        if not self.label_files and label_file is None:
+            raise MissingLabelsError
+        if label_file is not None:
+            self.output[label_file] = self.gather_data(label_file)
+        else:
+            for ind, file_path in enumerate(self.label_files):
+                self.output[ind] = self.gather_data(file_path)
 
-    def save(self, out_path: pl.Path, label_name: str, lam_compatible: bool = True, round_dec: (int, bool) = 4) -> None:
+    def save(self, out_path: [str, pl.Path], item: [int, str, pl.Path, pd.DataFrame] = 0, label_name: str = None,
+             lam_compatible: bool = True, round_dec: (int, bool) = 5) -> None:
         """Save the output DataFrame."""
+        if isinstance(item, int) or isinstance(item, str) or isinstance(item, pl.Path):
+            object_label, _, data = self.output[item]
+            label_name = f"Ch-{object_label}" if label_name is None else label_name
+        else:
+            data = item
         if lam_compatible:
             file = "Position.csv"
-            name_parts = label_name.split("_Ch=")
-            save_path = out_path.joinpath(self.ImageData.name, f"StarDist_Ch{name_parts[1]}_Statistics", file)
+            # name_parts = label_name.split("_Ch=")
+            save_path = out_path.joinpath(self.ImageData.name, f"StarDist_{label_name}_Statistics", file)
             save_path.parent.mkdir(exist_ok=True, parents=True)
-            data = self.lam_output()
+            data = data.rename(columns={"X": "Position X", "Y": "Position Y", "Z": "Position Z", "Area_Max": "Area"})
+            # data = self.output.lam_output()
         else:
             file = f"{label_name}.csv"
             save_path = out_path.joinpath(file)
-            data = self.output
         if round_dec is not False:
             data = data.round(decimals=round_dec)
         data.to_csv(save_path)
 
 
+class OutputData:
+    """Hold label name, file, and data of output."""
+
+    def __init__(self, label_paths, label_names: list = None):
+        self._label_files = label_paths
+        self._label_names = list(range(len(label_paths))) if label_names is None else label_names
+        self._output = [None for item in label_paths]
+        assert len(self._label_names) == len(self._output) == len(label_paths)
+
+    def __setitem__(self, key, data):
+        self._output[key] = data
+
+    def __getitem__(self, item: [int, str, pl.Path] = 0) -> [None, (str, str, pd.DataFrame)]:
+        # If given indexer is the label path, get its index number
+        if isinstance(item, str) or isinstance(item, pl.Path):
+            try:
+                item = self._label_files.index(str(item))
+            except IndexError:
+                print("Item not found in paths.")
+                return None, item, None
+        # If output data is not found for the item:
+        if self._output[item] is None:
+            print(f"Output data not found for {self._label_files[item]}.")
+        return self._label_names[item], str(self._label_files[item]), self._output[item]
+
+    def lam_output(self, label_ind: int = 0) -> pd.DataFrame:
+        output = self._output[label_ind]
+        if output is not None:
+            return output.rename(columns={"X": "Position X", "Y": "Position Y", "Z": "Position Z", "Area_Max": "Area"})
+        else:
+            return None
+
+
 class PredictObjects:
     """Predict objects in microscopy image using StarDist."""
+    default_config = {
+        "sd_models": ("DAPI10x"),
+        "prediction_chs": (1),
+        "predict_big": False,
+        "nms_threshold": None,
+        "probability_threshold": None,
+        "z_div": 1,
+        "long_div": 2,
+        "short_div": 1
+    }
 
     def __init__(self, images: ImageData, **pred_conf) -> None:
         self.name = images.name
         self.image = images.image
         self.label_paths = images.label_paths
-        self.conf = pred_conf
+        conf = deepcopy(PredictObjects.default_config)
+        conf.update(pred_conf)
+        self.conf = conf
 
         # Create list of model/channel pairs to use
         if isinstance(self.conf.get("sd_models"), tuple) and isinstance(self.conf.get("prediction_chs"), tuple):
@@ -261,21 +328,21 @@ class PredictObjects:
         else:
             self.model_list = [(self.conf.get("sd_models"), self.conf.get("prediction_chs"))]
 
-    def __call__(self, return_details: bool = True, output_path: str = None) -> [None, dict]:
+    def __call__(self, return_details: bool = True, output_path: str = None, *args) -> [None, dict]:
         out_details = dict()
         for model_and_ch in self.model_list:
-            path, details = self.predict(model_and_ch_nro=model_and_ch, output_path=output_path)
+            path, details = self.predict(model_and_ch_nro=model_and_ch, output_path=output_path, *args)
             out_details[model_and_ch[0]] = (path, details)
         if return_details:
             return out_details
 
-    def predict(self, model_and_ch_nro: tuple, output_path: str = label_path, make_plot: bool = True,
-                n_tiles: int = None) -> (np.ndarray, dict):
+    def predict(self, model_and_ch_nro: tuple, output_path: str = label_path, make_overlay: bool = True,
+                n_tiles: int = None, *args) -> (np.ndarray, dict):
         img = normalize(self.image.get_channel(model_and_ch_nro[1]), 1, 99.8, axis=(0, 1, 2))
         print(f"\n{self.image.name}; Model = {model_and_ch_nro[0]} ; Image dims = {self.image.shape}")
 
         # Define tile number if big image
-        if self.conf.get("predict_big"):
+        if self.conf.get("predict_big") and n_tiles is None:
             n_tiles = self.define_tiles(img.shape)
 
         # Run prediction
@@ -299,7 +366,7 @@ class PredictObjects:
         if save_label not in self.label_paths:
             self.label_paths.append(save_label)
 
-        if make_plot and self.conf.get("imagej_path") is not None:  # Create and save overlay tif of the labels
+        if make_overlay and self.conf.get("imagej_path") is not None:  # Create and save overlay tif of the labels
             overlay_images(pl.Path(output_path).joinpath(f'overlay_{file_stem}.tif'),
                            self.image.path, save_label, self.conf.get("imagej_path"),
                            channel_n=model_and_ch_nro[1])

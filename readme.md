@@ -53,6 +53,8 @@ Image analysis method for regionally defined organ-wide cellular phenotyping of 
 
 2. [Repository](https://github.com/hietakangas-laboratory/LAM)
 
+3. [Tutorial videos](https://www.youtube.com/playlist?list=PLjv-8Gzxh3AynUtI3HaahU2oddMbDpgtx)
+
 ------------------------
 
 ### License
@@ -60,3 +62,7 @@ This project is licensed under the GPL-3.0 License  - see the LICENSE.md file fo
 
 ### Authors
 Arto I. Viitanen - [Hietakangas laboratory](https://www.helsinki.fi/en/researchgroups/nutrient-sensing)
+
+### Acknowledgements
+Jaakko Mattila - [Mattila laboratory](https://www.helsinki.fi/en/researchgroups/metabolism-and-signaling/)
+Jack Morikka - [Mattila laboratory](https://www.helsinki.fi/en/researchgroups/metabolism-and-signaling/)
