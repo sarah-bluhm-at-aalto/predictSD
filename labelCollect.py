@@ -96,10 +96,10 @@ class ImageData:
                     for ch in np.arange(0, self.image.channels)}
         return {"Intensity": self.image.img[notnull]}
 
-    def labelled_voxels(self, channel: int = None) -> [pd.DataFrame, None]:
+    def labelled_voxels(self, item: [int, str] = None) -> [pd.DataFrame, None]:
         """Find labelled voxels."""
-        if channel is not None:
-            self.labels = ImageFile(channel, is_label=True)
+        if item is not None:
+            self.select(item)
 
         # Find locations of individual label voxels from label image
         try:
@@ -121,6 +121,11 @@ class ImageData:
             msg = f"Different image shapes. img: {self.image.shape}  ;  labels: {self.labels.shape}"
             raise ShapeMismatchError(image_name=self.image.name, message=msg)
 
+    def select(self, item: [int, str]) -> None:
+        """Make one of the inputted label files active."""
+        if isinstance(item, str):
+            item = self.label_paths.index(item)
+        self.labels = ImageFile(item, is_label=True)
 
 class ImageFile:
     """Define a microscopy image or label image for analysis."""
@@ -132,7 +137,6 @@ class ImageFile:
         self.is_label = is_label
         self.label_name = self.path
         self.shape = None
-        #self.datatype = None
         self.channels = None
         self.voxel_dims = force_dims
         self._define_variables(self.path)
@@ -197,10 +201,15 @@ class ImageFile:
             msg = f"Image axes order '{axes}' differs from the required 'Z(C)YX'."
             raise AxesOrderError(image_name=self.name, message=msg)
 
-    def get_channel(self, channel) -> np.ndarray:
+    def get_channel(self, channel: int) -> np.ndarray:
         """Get specific channel from a multichannel image."""
         if self.channels is not None and self.channels > 1:
-            return self.img[:, channel, :, :]
+            try:
+                return self.img[:, channel, :, :]
+            except IndexError:
+                print("Given index does not exist. Returning the last channel of image.")
+                return self.img[:, -1, :, :]
+        print("Image is not multi-channel.")
         return self.img
 
 
@@ -212,8 +221,9 @@ class CollectLabelData:
         self.ImageData = image_data
         self.coord_convert = convert_to_micron
         self.label_files = self.ImageData.label_paths if label_file is None else [label_file]
-        if label_names is None:
-            self.output = OutputData(self.label_files, label_names)
+        names = label_names if label_names is not None else self.get_label_names()
+        assert len(self.label_files) == len(names)
+        self.output = OutputData(self.label_files, names)
 
     def __call__(self, save_data: bool = False, out_path: [str, pl.Path] = None, **kwargs):
         if save_data and out_path is None:
@@ -227,7 +237,7 @@ class CollectLabelData:
     def gather_data(self, label_file) -> (pd.DataFrame, None):
         """Get output DataFrame containing object values."""
         # Find mean coordinates and intensities of the labels
-        voxel_data = self.ImageData.labelled_voxels(channel=label_file)
+        voxel_data = self.ImageData.labelled_voxels(item=label_file)
         if voxel_data is None:
             print(f"WARNING: No labels found on {label_file}.")
             return None
@@ -248,6 +258,9 @@ class CollectLabelData:
         grouped_voxels = voxel_data.groupby(["ID", "Z"])
         slices = grouped_voxels.size()
         return slices.groupby(level=0).apply(max) * np.prod(self.ImageData.voxel_dims[1:])
+
+    def get_label_names(self):
+        return [ImageFile(p, is_label=True).label_name for p in self.label_files]
 
     def get_volumes(self, voxel_data: pd.DataFrame) -> pd.Series:
         """Calculate object volume based on voxel dimensions."""
