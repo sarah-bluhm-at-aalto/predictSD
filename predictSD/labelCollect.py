@@ -5,6 +5,8 @@ from glob import glob
 import subprocess
 from copy import deepcopy
 import warnings
+import io
+from contextlib import redirect_stderr
 
 import numpy as np
 import pandas as pd
@@ -32,14 +34,14 @@ coords_to_microns = True  # The voxel dimensions are read from metadata (see: Im
 
 # If labels already exist set to True. If False, the labels will be predicted based on microscopy images.
 # Otherwise only result tables will be constructed.
-labels_exist = True
+label_existence = False
 
 # ZYX-axes voxel dimensions in microns. Size is by default read from image metadata.
 # KEEP AS None UNLESS SIZE METADATA IS MISSING. Dimensions are given as tuple, i.e. force_voxel_size=(Zdim, Ydim, Xdim)
 force_voxel_size = None  # 10x=(8.2000000, 0.6500002, 0.6500002); 20x=(3.4, 0.325, 0.325)
 
 # Give configuration for label prediction:
-prediction_conf = {
+prediction_configuration = {
     # GIVE MODEL TO USE:
     # Give model names in tuple, e.g. "sd_models": ("stardist_10x", "GFP")
     "sd_models": ("GFP10x", "DAPI10x"),
@@ -64,7 +66,7 @@ prediction_conf = {
     # Splitting of image into segments along z, y, and x axes. Long_div and short_div split the longer and shorter axis
     # of X and Y axes, respectively. The given number indicates how many splits are performed on the given axis.
     "z_div": 1,
-    "long_div": 4,  # Block number on the longer axis
+    "long_div": 3,  # Block number on the longer axis
     "short_div": 2,  # Block number on the shorter axis
 
     # Path to ImageJ run-file (value below searches for exe-file on university computer)
@@ -123,9 +125,10 @@ class ImageData:
 
     def select(self, item: [int, str]) -> None:
         """Make one of the inputted label files active."""
-        if isinstance(item, str):
-            item = self.label_paths.index(item)
+        if isinstance(item, int):
+            item = self.label_paths[item]
         self.labels = ImageFile(item, is_label=True)
+
 
 class ImageFile:
     """Define a microscopy image or label image for analysis."""
@@ -144,7 +147,12 @@ class ImageFile:
     @property
     def img(self) -> np.ndarray:
         """Read image."""
-        return imread(self._img)
+        f = io.StringIO()
+        with redirect_stderr(f):
+            img = imread(self._img)
+            out = f.getvalue()
+        parse_errs(out)
+        return img
 
     @img.setter
     def img(self, path: (str, pl.Path)):
@@ -167,8 +175,8 @@ class ImageFile:
 
     def _define_variables(self, filepath: [str, pl.Path]) -> None:
         """Define relevant variables based on image properties and metadata."""
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
+        f = io.StringIO()
+        with redirect_stderr(f):
             with TiffFile(filepath) as tif:
                 self._test_ax_order(tif.series[0].axes)  # Confirm correct axis order
                 self.shape = tif.series[0].shape
@@ -184,6 +192,8 @@ class ImageFile:
                     self.voxel_dims = self._find_voxel_dims(tif.imagej_metadata.get('spacing'),
                                                             _get_tag(tif, "YResolution"),
                                                             _get_tag(tif, "XResolution"))
+            out = f.getvalue()
+        parse_errs(out)
 
     def _find_voxel_dims(self, z_space: [None, float], y_res: [None, tuple], x_res: [None, tuple]) -> tuple:
         """Transform image axis resolutions to voxel dimensions."""
@@ -229,6 +239,7 @@ class CollectLabelData:
         if save_data and out_path is None:
             print("WARNING: CollectLabelData.__call__() requires path to output-folder. Data not saved.")
             return
+        print(f"Collecting label data.\n")
         for ind, label_file in enumerate(self.label_files):
             self.read_labels(label_file=label_file)
             if save_data:
@@ -298,6 +309,8 @@ class CollectLabelData:
             save_path = out_path.joinpath(file)
         if round_dec is not False:
             data = data.round(decimals=round_dec)
+        # Create output-directory and save:
+        out_path.mkdir(exist_ok=True)
         data.to_csv(save_path)
 
 
@@ -502,12 +515,15 @@ def output_dirs(out_path: str, lbl_path: str) -> None:
 def read_model(model_name: str) -> StarDist3D:
     """Read StarDist model."""
     with HidePrint():
-        return StarDist3D(None, name=model_name, basedir='models')
+        return StarDist3D(None, name=model_name, basedir=str(pl.Path(__file__).parents[1].joinpath('models')))
 
 
-def overlay_images(save_path: [pl.Path, str], image_path: [pl.Path, str],  label_path: [pl.Path, str],
+def overlay_images(save_path: [pl.Path, str], path_to_image: [pl.Path, str],  path_to_label: [pl.Path, str],
                    imagej_path: [pl.Path, str], channel_n: int = 1) -> None:
     """Create flattened, overlaid tif-image of the intensities and labels."""
+    # Create output-directory
+    pl.Path(save_path).mkdir(exist_ok=True)
+
     # Find path to ImageJ macro for the image creation:
     file_dir = pl.Path(__file__).parent.absolute()
     macro_file = file_dir.joinpath("overlayLabels.ijm")
@@ -521,7 +537,7 @@ def overlay_images(save_path: [pl.Path, str], image_path: [pl.Path, str],  label
         return
 
     # Parse run command and arguments:
-    input_args = ";;".join([str(save_path), str(image_path), str(label_path), str(channel_n)])
+    input_args = ";;".join([str(save_path), str(path_to_image), str(path_to_label), str(channel_n)])
     fiji_cmd = " ".join([str(imagej_path), "--headless", "-macro", str(macro_file), input_args])
     try:
         subprocess.run(fiji_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
@@ -535,8 +551,18 @@ def get_tiff_dtype(numpy_dtype: str) -> int:
     return ['8', 'placeholder', '16', '32'].index(num) + 1
 
 
-def collect_labels(img_path: str, lbl_path: str, out_path: str, pred_conf: dict = None,
-                   to_microns: bool = True, voxel_dims: [None, tuple] = None) -> None:
+def parse_errs(out):
+    out = out.split(r"\n")
+    out_errs = [estring for estring in out if not estring.startswith("TiffPage 0: TypeError: read_bytes()") and
+                estring != '']
+    if out_errs:
+        print("TiffFile stderr:")
+        for err in out_errs:
+            print(f" - {err}")
+
+
+def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf: dict = None,
+                   to_microns: bool = True, voxel_dims: [None, tuple] = None, labels_exist: bool = False) -> None:
     """Perform full analysis on given image directory."""
 
     # Create output directories
@@ -563,7 +589,7 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, pred_conf: dict 
 
         # Prediction:
         if not labels_exist:
-            predictor = PredictObjects(images, return_details=True, **pred_conf)
+            predictor = PredictObjects(images, return_details=True, **prediction_conf)
             details = predictor(out_path=lbl_path, overlay_path=out_path)
 
         # Get information on label objects
@@ -576,7 +602,7 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, pred_conf: dict 
         # Print description of collected data
         for data in label_data.output:
             #print(f"Description of '{pl.Path(label_file).name}':")
-            print(data)
+            print(f"Model:  {data[0]}\nFile:  {data[1]}\n{data[2].describe()}\n")
         #print(f"Description of '{pl.Path(label_file).name}':")
         #print(label_data(save_data=True, out_path=pl.Path(out_path),
         #                 label_name=pl.Path(label_file).stem.split(".labels")[0],
@@ -588,6 +614,6 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, pred_conf: dict 
 
 
 if __name__ == "__main__":
-    collect_labels(image_path, label_path, output_path, pred_conf=prediction_conf, to_microns=coords_to_microns,
-                   voxel_dims=force_voxel_size)
+    collect_labels(image_path, label_path, output_path, prediction_conf=prediction_configuration,
+                   to_microns=coords_to_microns, voxel_dims=force_voxel_size, labels_exist=label_existence)
     print("DONE")
