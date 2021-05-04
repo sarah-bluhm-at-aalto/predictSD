@@ -20,9 +20,9 @@ from stardist.models import StarDist3D
 
 # INPUT/OUTPUT PATHS
 # ------------------
-image_path = r'C:\Users\artoviit\StarDist_testing\testSet\images'
-label_path = r'C:\Users\artoviit\StarDist_testing\testSet\masks'
-output_path = r'C:\Users\artoviit\StarDist_testing\testSet\results'
+image_path = r'C:\testSet\images'
+label_path = r'C:\testSet\masks'
+output_path = r'C:\testSet\results'
 
 # Whether to save label data in LAM-compatible format and folder hierarchy
 # This expects that the images are named in a compatible manner, i.e. "samplegroup_samplename.tif"
@@ -43,11 +43,12 @@ force_voxel_size = None  # 10x=(8.2000000, 0.6500002, 0.6500002); 20x=(3.4, 0.32
 # Give configuration for label prediction:
 prediction_configuration = {
     # GIVE MODEL TO USE:
-    # Give model names in tuple, e.g. "sd_models": ("stardist_10x", "GFP")
+    # Give model names in tuple, e.g. "sd_models": ("DAPI10x", "GFP10x")
     "sd_models": ("GFP10x", "DAPI10x"),
 
-    # Channel position of the channel to predict. Set to None if images have only one channel. Starts from zero.
-    # If multiple channels, the numbers must be given in same order as sd_models, e.g. (1, 0). Indexing starts from 0.
+    # Channel position of the channel to predict. Set to None if images have only one channel. Indexing from zero.
+    # If multiple channels, the numbers must be given in same order as sd_models, e.g. ("DAPI10x", "GFP10x") with (1, 0)
+    # Note that the images channel positions remain the same even if you split them to separate images with ImageJ!
     "prediction_chs": (0, 1),      # (1, 0)
 
     # Set True if predicting from large images, e.g. whole midgut.
