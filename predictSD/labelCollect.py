@@ -37,7 +37,7 @@ coords_to_microns = True  # The voxel dimensions are read from metadata (see: Im
 label_existence = False
 
 # ZYX-axes voxel dimensions in microns. Size is by default read from image metadata.
-# KEEP AS None UNLESS SIZE METADATA IS MISSING. Dimensions are given as tuple, i.e. force_voxel_size=(Zdim, Ydim, Xdim)
+# KEEP AS None UNLESS SIZE METADATA IS WRONG. Dimensions are given as tuple, i.e. force_voxel_size=(Zdim, Ydim, Xdim)
 force_voxel_size = None  # 10x=(8.2000000, 0.6500002, 0.6500002); 20x=(3.4, 0.325, 0.325)
 
 # Give configuration for label prediction:
@@ -48,7 +48,8 @@ prediction_configuration = {
 
     # Channel position of the channel to predict. Set to None if images have only one channel. Indexing from zero.
     # If multiple channels, the numbers must be given in same order as sd_models, e.g. ("DAPI10x", "GFP10x") with (1, 0)
-    # Note that the images channel positions remain the same even if you split them to separate images with ImageJ!
+    # NOTE that the channel positions remain the same even if split to separate images with ImageJ!
+    #  -> Array indexing however is changed for Python; either use input images with a single channel or all of them
     "prediction_chs": (0, 1),      # (1, 0)
 
     # Set True if predicting from large images, e.g. whole midgut.
@@ -387,7 +388,7 @@ class PredictObjects:
         if return_details:
             return out_details
 
-    def predict(self, model_and_ch_nro: tuple, out_path: str = label_path, make_overlay: bool = True,
+    def predict(self, model_and_ch_nro: tuple, out_path: str, make_overlay: bool = True,
                 n_tiles: int = None, overlay_path: str = None, **kwargs) -> (np.ndarray, dict):
         img = normalize(self.image.get_channel(model_and_ch_nro[1]), 1, 99.8, axis=(0, 1, 2))
         print(f"\n{self.image.name}; Model = {model_and_ch_nro[0]} ; Image dims = {self.image.shape}")
@@ -523,7 +524,7 @@ def overlay_images(save_path: [pl.Path, str], path_to_image: [pl.Path, str],  pa
                    imagej_path: [pl.Path, str], channel_n: int = 1) -> None:
     """Create flattened, overlaid tif-image of the intensities and labels."""
     # Create output-directory
-    pl.Path(save_path).mkdir(exist_ok=True)
+    pl.Path(save_path).parent.mkdir(exist_ok=True)
 
     # Find path to ImageJ macro for the image creation:
     file_dir = pl.Path(__file__).parent.absolute()
