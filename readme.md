@@ -14,6 +14,38 @@ labelCollect.py outputs tiff-images of the predicted labels, saves label informa
 folders/files or dumps them in a single output folder, and creates image/label -overlays by calling overlayLabels.ijm
 if given path to an ImageJ-executable.
 
+### Usage
+The simplest way to perform label prediction and data collection is to edit the variables on top of labelCollect.py
+and then run the file. The script is designed to analyze all tiff-images found at an input folder.
+
+Alternatively, you can import predictSD and create new pipeline. In the snippet below, the prediction and collection is
+performed to a single image file:
+```python
+import predictSD as ps
+
+label_out = r"C:\testSet\masks"
+results_out = r"C:\testSet\results"
+
+image = ps.ImageData(r"C:\testSet\images\ctrl_2021-02-05_101657.tiff")
+ps.PredictObjects(image, return_details=False, sd_models=("GFP10x", "DAPI10x"), prediction_chs=(0, 1)
+                  )(out_path=label_out, overlay_path=results_out)
+ps.CollectLabelData(image, convert_to_micron=True)(out_path=label_out, lam_compatible=True, save_data=True)
+```
+If labels already exist, the images must be named _samplename.tif(f)_ and _samplename(\_channelname).labels.tif(f)_,
+where text inside parentheses are optional. For example, if name of image is 'ctrl_1146.tif' then labels could
+be named '_ctrl_1146.labels.tif_' or with additional channel's or used model's name, e.g. '_ctrl_1146_Ch=1.labels.tif_'
+or '_ctrl_1146_DAPI10x.labels.tif_', respectively.
+
+The existing label information could be collected with:
+```python
+mask_folder = r"C:\testSet\masks"
+image = ps.ImageData(r"C:\testSet\images\ctrl_1146.tif",
+                     paths_to_labels=ps.corresponding_imgs("ctrl_1146", mask_folder))
+# If label files do not have the additional channelname-identifiers, give names to CollectLabelData
+names = ("GFP", "DAPI")   # Or label_names=None below
+ps.CollectLabelData(image, convert_to_micron=True, label_names=names)(out_path=results_out, lam_compatible=True,
+                                                                      save_data=True)
+```
 
 ## Models
 
@@ -30,9 +62,9 @@ Dmel midgut DAPI-stained nuclei. Trained with voxel ZYX-dimensions of (3.40 um, 
 Clarity.
 
 #### fatBody
-Dmel fat body cell DAPI staining. Trained with voxel ZYX-dimensions of (1.0404597 um, 0.4456326 um, 0.4456326 um).
-Imaged with Leica SP8 upright, 20x. The model has smaller cell size than normal and may not function optimally on images
-without the phenotype.
+Dmel day 5 larvae fat body cell DAPI staining. Trained with voxel ZYX-dimensions of (1.0404597 um, 0.4456326 um,
+0.4456326 um). Imaged with Leica SP8 upright, 20x. The model was trained with images from control group and experimental
+group which showed a phenotype with smaller nuclei.
 
 #### GFP10x
 Dmel midgut progenitor esg-F/O lineage tracing. Trained with voxel ZYX-dimensions of (8.20 um, 0.650 um, 0.650 um).
@@ -53,6 +85,8 @@ Image analysis method for regionally defined organ-wide cellular phenotyping of 
 
 2. [Repository](https://github.com/hietakangas-laboratory/LAM)
 
+3. [Tutorial videos](https://www.youtube.com/playlist?list=PLjv-8Gzxh3AynUtI3HaahU2oddMbDpgtx)
+
 ------------------------
 
 ### License
@@ -60,3 +94,7 @@ This project is licensed under the GPL-3.0 License  - see the LICENSE.md file fo
 
 ### Authors
 Arto I. Viitanen - [Hietakangas laboratory](https://www.helsinki.fi/en/researchgroups/nutrient-sensing)
+
+### Acknowledgements
+Jaakko Mattila - [Mattila laboratory](https://www.helsinki.fi/en/researchgroups/metabolism-and-signaling/)
+Jack Morikka - [Mattila laboratory](https://www.helsinki.fi/en/researchgroups/metabolism-and-signaling/)
