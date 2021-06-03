@@ -27,7 +27,7 @@ label_out = r"C:\testSet\masks"
 results_out = r"C:\testSet\results"
 
 image = ps.ImageData(r"C:\testSet\images\ctrl_2021-02-05_101657.tiff")
-ps.PredictObjects(image, return_details=False, sd_models=("GFP10x", "DAPI10x"), prediction_chs=(0, 1)
+ps.PredictObjects(image, **{'return_details': False, 'sd_models': ("GFP10x", "DAPI10x"), 'prediction_chs': (0, 1)}
                   )(out_path=label_out, overlay_path=results_out)
 ps.CollectLabelData(image, convert_to_micron=True)(out_path=label_out, lam_compatible=True, save_data=True)
 ```
