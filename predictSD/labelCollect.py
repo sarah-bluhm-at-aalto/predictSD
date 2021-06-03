@@ -548,7 +548,6 @@ class OutputData:
 
 class PredictObjects:
     """Predict objects in a microscopy image using StarDist.
-
     Attributes
     ----------
     default_config : dict
@@ -596,7 +595,7 @@ class PredictObjects:
         self.image = images.image
         self.label_paths = images.label_paths
         config = deepcopy(PredictObjects.default_config)
-        config.update({key: value for key, value in prediction_config})
+        config.update({key: value for key, value in prediction_config.items()})
         self.config = config
 
         # Create list of model/channel pairs to use
@@ -700,7 +699,7 @@ class PredictObjects:
         return labels, details
 
     def define_tiles(self, dims: Tuple[int, int, int]) -> Tuple[int, int, int]:
-        """Define ZYX order of image divisors.
+        """Define ZYX order of image divisors using division values from config.
         Parameters
         ----------
         dims : Tuple[int, int, int]
