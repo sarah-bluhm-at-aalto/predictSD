@@ -16,10 +16,10 @@ if given path to an ImageJ-executable.
 
 ### Usage
 The simplest way to perform label prediction and data collection is to edit the variables on top of labelCollect.py
-and then run the file. The script is designed to analyze all tiff-images found at an input folder.
+and then run the file. The script is designed to analyze all tiff-images found at an input path.
 
-Alternatively, you can import predictSD and create new pipeline. In the snippet below, the prediction and collection is
-performed to a single image file:
+Alternatively, you can import predictSD and create a new pipeline. In the snippet below, the prediction and collection
+is performed to a single image file:
 ```python
 import predictSD as ps
 
@@ -36,9 +36,13 @@ where text inside parentheses are optional. For example, if name of image is 'ct
 be named '_ctrl_1146.labels.tif_' or with additional channel's or used model's name, e.g. '_ctrl_1146_Ch=1.labels.tif_'
 or '_ctrl_1146_DAPI10x.labels.tif_', respectively.
 
-The existing label information could be collected with:
+Information from existing labels could be collected with:
 ```python
+import predictSD as ps
+
+results_out = r"C:\testSet\results"
 mask_folder = r"C:\testSet\masks"
+
 image = ps.ImageData(r"C:\testSet\images\ctrl_1146.tif",
                      paths_to_labels=ps.corresponding_imgs("ctrl_1146", mask_folder))
 # If label files do not have the additional channelname-identifiers, give names to CollectLabelData
@@ -50,8 +54,8 @@ ps.CollectLabelData(image, convert_to_micron=True, label_names=names)(out_path=r
 ## Models
 
 The models-folder contains lab-made StarDist models for the detection of cells on varying stains and magnifictations.
-Labelcollect.py expects used models to be found at a relative path of './models/_model_name_', i.e. the models-folder
-must be located in the same folder as the script-file.
+Labelcollect.py expects used models to be found at a relative path of '../models/_model_name_', i.e. the folders must be
+arranged the same as in the repository.
 
 #### DAPI10x
 Dmel midgut DAPI-stained nuclei. Trained with voxel ZYX-dimensions of (8.20 um, 0.650 um, 0.650 um). Imaged with Aurox
@@ -67,14 +71,14 @@ Dmel day 5 larvae fat body cell DAPI staining. Trained with voxel ZYX-dimensions
 group which showed a phenotype with smaller nuclei.
 
 #### GFP10x
-Dmel midgut progenitor esg-F/O lineage tracing. Trained with voxel ZYX-dimensions of (8.20 um, 0.650 um, 0.650 um).
+Dmel midgut ISC/EB-specific esg<sup>ts</sup> driver. Trained with voxel ZYX-dimensions of (8.20 um, 0.650 um, 0.650 um).
 Imaged with Aurox Clarity.
 
 
 ## dropHeaders.py
 Used to drop extra header rows from datafiles in LAM-hierarchical sample-folders so that the first row of files contains
-the column labels. Running this script on Imaris exported files is required when combining data from Imaris and
-labelCollect.py
+the column labels. LAM expects input data to have exact header row index. Running this script on Imaris exported files
+is required when combined with data from labelCollect.py.
 
 ------------------------
 
