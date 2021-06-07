@@ -430,12 +430,16 @@ class CollectLabelData:
             voxel_data.loc[:, cols] = voxel_data.loc[:, cols].multiply(self.image_data.voxel_dims)
 
         # Collapse individual voxels into label-specific averages.
-        output = voxel_data.groupby("ID").mean()
+        label_groups = voxel_data.groupby("ID")
+        output = label_groups.mean()
 
         # Calculate other variables of interest
         output = output.assign(
-            Volume      = self._get_volumes(voxel_data),
-            Area_Max    = self._get_area_maximums(voxel_data)
+            Intensity_Max   = label_groups.max(),
+            Intensity_Min   = label_groups.min(),
+            Intensity_Std   = label_groups.std(),
+            Volume          = self._get_volumes(voxel_data),
+            Area_Max        = self._get_area_maximums(voxel_data)
         )
         return output
 
