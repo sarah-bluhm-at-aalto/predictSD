@@ -74,6 +74,10 @@ group which showed a phenotype with smaller nuclei.
 Dmel midgut ISC/EB-specific esg<sup>ts</sup> driver. Trained with voxel ZYX-dimensions of (8.20 um, 0.650 um, 0.650 um).
 Imaged with Aurox Clarity.
 
+#### GFP20x
+Dmel midgut ISC/EB-specific esg<sup>ts</sup> driver. Trained with voxel ZYX-dimensions of (3.40 um, 0.325 um, 0.325 um).
+Imaged with Aurox Clarity.
+
 
 ## dropHeaders.py
 Used to drop extra header rows from datafiles in LAM-hierarchical sample-folders so that the first row of files contains

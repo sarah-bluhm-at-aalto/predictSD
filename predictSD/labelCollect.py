@@ -430,17 +430,21 @@ class CollectLabelData:
             voxel_data.loc[:, cols] = voxel_data.loc[:, cols].multiply(self.image_data.voxel_dims)
 
         # Collapse individual voxels into label-specific averages.
-        label_groups = voxel_data.groupby("ID")
-        output = label_groups.mean()
+        output = voxel_data.groupby("ID").mean()
 
         # Calculate other variables of interest
         output = output.assign(
-            Intensity_Max   = label_groups.max(),
-            Intensity_Min   = label_groups.min(),
-            Intensity_Std   = label_groups.std(),
             Volume          = self._get_volumes(voxel_data),
             Area_Max        = self._get_area_maximums(voxel_data)
         )
+
+        # Get intensities and calculate related variables
+        cols = voxel_data.columns.difference(['X', 'Y', 'Z'])
+        intensities = voxel_data.loc[:, cols].groupby("ID")
+        output = output.join([
+            intensities.min().rename(lambda x: x.replace("Mean", "Min"), axis=1),
+            intensities.max().rename(lambda x: x.replace("Mean", "Max"), axis=1),
+            intensities.std().rename(lambda x: x.replace("Mean", "StdDev"), axis=1)])
         return output
 
     def get_label_names(self):
@@ -639,6 +643,15 @@ class PredictObjects:
             return out_details
         return None
 
+    def _prediction(self, model, img, n_tiles, config):
+        """Use model to predict image labels."""
+        labels, details = model.predict_instances(img, axes="ZYX",
+            prob_thresh=config.get("probability_threshold"),
+            nms_thresh=config.get("nms_threshold"),
+            n_tiles=n_tiles
+        )
+        return labels, details
+
     def predict(self, model_and_ch_nro: tuple, out_path: str, make_overlay: bool = True,
                 n_tiles: tuple = None, overlay_path: str = None, **kwargs) -> Tuple[np.ndarray, dict]:
         """Perform a prediction to one image.
@@ -675,12 +688,8 @@ class PredictObjects:
             n_tiles = self.define_tiles(img.shape)
 
         # Run prediction
-        labels, details = read_model(model_and_ch_nro[0]).predict_instances(
-            img, axes="ZYX",
-            prob_thresh=config.get("probability_threshold"),
-            nms_thresh=config.get("nms_threshold"),
-            n_tiles=n_tiles
-        )
+        model = read_model(model_and_ch_nro[0])
+        labels, details = self._prediction(model, img, n_tiles, config)
 
         # Define save paths:
         file_stem = f'{self.name}_{model_and_ch_nro[0]}'
