@@ -1,6 +1,6 @@
 SETUP OF ENVIRONMENT
 --------------------
-Instruction below is for the setup on Win 10. Setup will be different depending on
+Instruction below is for the setup on Win 10 using CUDA v10.1. Setup will be different depending on
 operating system.
 
 1. Update GPU drivers
@@ -16,6 +16,17 @@ operating system.
 	a) INCLUDE C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\include
 	b) LIB C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\lib\x64
 6. Create Python/Anaconda environment
-	a) required packages in requirements.txt
+	a) Packages:
+	    tensorflow-gpu==2.3.1
+	    jupyter-tensorboard
+	    nodejs==0.1.1
+	    npm==0.1.1
+	    pybind11==2.5.0
+	    gputools==0.2.9
+	    stardist
+	    numpy
+	    pandas
+	    pathlib
+	    tifffile
 	b) on Windows, install PyOpenCL from pre-made binary:
 	   https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyopencl

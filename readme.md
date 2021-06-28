@@ -1,12 +1,15 @@
 # predictSD
-**Prediction of cellular objects in 3D using StarDist and collection of label information into a data table.** The
-collected information includes object positions, maximal areas, volumes, and channel mean intensities. The data can
-automatically be saved in LAM-usable format, if so wanted.
+**Prediction of cellular objects in 3D using StarDist<sup>1,2</sup> and collection of label information into a data
+table.** The collected information includes object positions, maximal areas, volumes, and channel mean intensities. The
+data can automatically be saved in LAM-usable format, if so wanted. PredictSD can also be used to collect information
+on objects within TIFF-images from any segmentation source when provided together with the intensity images and if
+each label in the segmentation images is marked by a single, unique value.
 
 ## Installation
 PredictSD requires an environment that is capable of running StarDist. For the creation of such environment, see
-[StarDist's GitHub-page](https://github.com/stardist/stardist/). Additional packages are listed in
-'docs/requirements.txt'. For installation on Win10, see 'docs/environment_setup.txt'.
+[StarDist's GitHub-page](https://github.com/stardist/stardist/). Required packages are listed in
+'predictSD/docs/requirements.txt'. For installation on Win10 using CUDA 10.1, see
+'predictSD/docs/environment_setup.txt'.
 
 ## labelCollect.py
 The whole process is handled through labelCollect.py, which contains information on use (open file in text editor). The
@@ -110,4 +113,15 @@ Arto I. Viitanen - [Hietakangas laboratory](https://www.helsinki.fi/en/researchg
 
 ### Acknowledgements
 Jaakko Mattila - [Mattila laboratory](https://www.helsinki.fi/en/researchgroups/metabolism-and-signaling/)
+
 Jack Morikka - [Mattila laboratory](https://www.helsinki.fi/en/researchgroups/metabolism-and-signaling/)
+
+### References
+1.  Uwe Schmidt, Martin Weigert, Coleman Broaddus, and Gene Myers.
+    Cell Detection with Star-convex Polygons.
+    International Conference on Medical Image Computing and Computer-Assisted Intervention (MICCAI), Granada, Spain, September 2018.
+
+
+2.  Martin Weigert, Uwe Schmidt, Robert Haase, Ko Sugawara, and Gene Myers.
+    Star-convex Polyhedra for 3D Object Detection and Segmentation in Microscopy.
+    The IEEE Winter Conference on Applications of Computer Vision (WACV), Snowmass Village, Colorado, March 2020
