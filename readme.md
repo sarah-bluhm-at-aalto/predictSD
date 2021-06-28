@@ -3,6 +3,11 @@
 collected information includes object positions, maximal areas, volumes, and channel mean intensities. The data can
 automatically be saved in LAM-usable format, if so wanted.
 
+## Installation
+PredictSD requires an environment that is capable of running StarDist. For the creation of such environment, see
+[StarDist's GitHub-page](https://github.com/stardist/stardist/). Additional packages are listed in
+'docs/requirements.txt'. For installation on Win10, see 'docs/environment_setup.txt'.
+
 ## labelCollect.py
 The whole process is handled through labelCollect.py, which contains information on use (open file in text editor). The
 only input required (sans the settings) are tiff-images with axes order of 'Z(C)YX', i.e. ImageJ-format. The images can
