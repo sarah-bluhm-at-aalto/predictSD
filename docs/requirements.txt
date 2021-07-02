@@ -1,11 +1,15 @@
-tensorflow-gpu          # ==2.3.1
+tensorflow
 jupyter-tensorboard
-nodejs                  # ==0.1.1
-npm                     # ==0.1.1
-pybind11                # ==2.5.0
-gputools                # ==0.2.9
+nodejs
+npm
+pybind11
+gputools
 stardist
 pandas
 pathlib
 tifffile
+scikit-tensor-py3
 pyopencl
+
+# pip install tensorflow jupyter-tensorboard nodejs npm pybind11 gputools stardist pandas pathlib tifffile scikit-tensor-py3 pyopencl
+# ON WIN10 REPLACE PYOPENCL WITH path\to\pyopencl.whl

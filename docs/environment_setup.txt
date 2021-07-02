@@ -1,32 +1,28 @@
 SETUP OF ENVIRONMENT
 --------------------
-Instruction below is for the setup on Win 10 using CUDA v10.1. Setup will be different depending on
-operating system.
+Instruction below is for the setup on Win 10. Different versions may be used, but the following setup has been tested.
+Setup will be different depending on operating system.
 
 1. Update GPU drivers
 2. Install visual studio + individual components:
 	a) MSVC v142 - VS 2019 C++ x64/x86 build tools
 	b) Windows 10 SDK (10.0.18362.0)
-3. Download CUDA toolkit 10.1 Update 2
+3. Download CUDA (here v11.4)
 	a) install only 'Developer' and 'Runtime' modules
-4. Download CuDNN 7.6.5 for CUDA 10.1
-	a) unpack to C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\
+4. Download CuDNN v8.2.1.32 for CUDA 11.4
+	a) unpack to C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4\
 5. Add system variables (Control panel > Edit system environment variables):
 	   [NAME & PATH]
-	a) INCLUDE C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\include
-	b) LIB C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\lib\x64
+	a) INCLUDE C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4\include
+	b) LIB C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4\lib\x64
 6. Create Python/Anaconda environment
-	a) Packages:
-	    tensorflow-gpu==2.3.1
-	    jupyter-tensorboard
-	    nodejs==0.1.1
-	    npm==0.1.1
-	    pybind11==2.5.0
-	    gputools==0.2.9
-	    stardist
-	    numpy
-	    pandas
-	    pathlib
-	    tifffile
-	b) on Windows, install PyOpenCL from pre-made binary:
-	   https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyopencl
+	a) 1. conda create -n stardistenv python=3.9
+	   2. conda activate stardistenv
+	       -------OR-------
+	   1. python -m virtualenv stardistenv
+	   2. stardistenv\Scripts\activate
+
+	b) Install packages:
+	   pip install tensorflow jupyter-tensorboard nodejs npm pybind11 gputools stardist pandas pathlib tifffile scikit-tensor-py3 pyopencl
+	!!! on Windows, install PyOpenCL from pre-made binary (https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyopencl):
+	   i.e. above, in pip install-command change pyopencl to path\to\pyopencl.whl

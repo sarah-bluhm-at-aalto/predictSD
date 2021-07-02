@@ -8,7 +8,7 @@ each label in the segmentation images is marked by a single, unique value.
 ## Installation
 PredictSD requires an environment that is capable of running StarDist. For the creation of such environment, see
 [StarDist's GitHub-page](https://github.com/stardist/stardist/). Required packages are listed in
-'predictSD/docs/requirements.txt'. For installation on Win10 using CUDA 10.1, see
+'predictSD/docs/requirements.txt'. For installation on Win10 using CUDA 11.4, see
 'predictSD/docs/environment_setup.txt'.
 
 ## labelCollect.py
