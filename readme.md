@@ -35,9 +35,14 @@ label_out = r"C:\testSet\masks"
 results_out = r"C:\testSet\results"
 
 image = ps.ImageData(r"C:\testSet\images\ctrl_2021-02-05_101657.tiff")
-ps.PredictObjects(image, **{'return_details': False, 'sd_models': ("GFP10x", "DAPI10x"), 'prediction_chs': (0, 1)}
-                  )(out_path=label_out, overlay_path=results_out)
-ps.CollectLabelData(image, convert_to_micron=True)(out_path=label_out, lam_compatible=True, save_data=True)
+config = {'return_details': False,
+          'sd_models': ("GFP10x", "DAPI10x"),                   # Names of models to apply for the image
+          'prediction_chs': (0, 1)}                             # Respective channel indices to apply the models on
+
+predictor = ps.PredictObjects(image, **config)                  # Initiate prediction class
+predictor(out_path=label_out, overlay_path=results_out)         # Perform prediction for objects in image
+data = ps.CollectLabelData(image, convert_to_micron=True)       # Initiate class for collecting label information
+data(out_path=label_out, lam_compatible=True, save_data=True)   # Collect object intensities, area, volume, etc.
 ```
 If labels already exist, the images must be named _samplename.tif(f)_ and _samplename(\_channelname).labels.tif(f)_,
 where text inside parentheses are optional. For example, if name of image is 'ctrl_1146.tif' then labels could
@@ -46,17 +51,33 @@ or '_ctrl_1146_DAPI10x.labels.tif_', respectively.
 
 Information from existing labels could be collected with:
 ```python
-import predictSD as ps
-
 results_out = r"C:\testSet\results"
 mask_folder = r"C:\testSet\masks"
 
-image = ps.ImageData(r"C:\testSet\images\ctrl_1146.tif",
-                     paths_to_labels=ps.corresponding_imgs("ctrl_1146", mask_folder))
+labels = ps.corresponding_imgs("ctrl_1146", mask_folder)        # Find existing label files for an image.
+image = ps.ImageData(r"C:\testSet\images\ctrl_1146.tif",        # Initiate class for collecting label information
+                     paths_to_labels=labels)
 # If label files do not have the additional channelname-identifiers, give names to CollectLabelData
-names = ("GFP", "DAPI")   # Or label_names=None below
-ps.CollectLabelData(image, convert_to_micron=True, label_names=names)(out_path=results_out, lam_compatible=True,
-                                                                      save_data=True)
+names = ("GFP", "DAPI")         # Alternatively, label_names=None
+# Initiate label collection and call to save results in csv-files 
+ps.CollectLabelData(image, convert_to_micron=True, label_names=names
+                    )(out_path=results_out, lam_compatible=True, save_data=True)
+```
+### Memory Management
+Available GPU memory is a limiting factor for object prediction on larger images. The total GPU memory in megabytes and
+allocatable fraction can be provided to _prediction_config_ as a tuple when initiating predictSD.PredictObjects with the
+keyword _'memory_limit'_ . Similarly, the keyword _'predict_big'_ can be set as True (default) to split the image into
+more manageable blocks. The number of divisions on each axis can be defined with the keywords _'z_div'_, _'long_div'_,
+and _'short_div'_.
+```python
+config = {'sd_models': "DAPI10x", 'prediction_chs': 1,
+          'memory_limit': (8000, 0.9),                  # Allocate 90% of 8Gb total GPU memory
+          'predict_big': True,                          # Image will be split into blocks
+          'z_div': 2,                                   # Blocks on Z-axis
+          'long_div': 8,                                # Blocks on the longer axis of XY
+          'short_div': 3}                               # Blocks on the shorter axis of XY
+predictor = ps.PredictObjects(image, **config)  
+
 ```
 
 ## Models

@@ -4,10 +4,8 @@ import os
 from glob import glob
 import subprocess
 from copy import deepcopy
-import warnings
-import io
-from contextlib import redirect_stderr
 from typing import Union, Tuple, List
+from logging import NOTSET, disable, captureWarnings
 
 import numpy as np
 import pandas as pd
@@ -15,14 +13,16 @@ import pathlib as pl
 from tifffile import TiffFile, imread
 
 from csbdeep.utils import normalize
+from csbdeep.utils.tf import limit_gpu_memory
 from csbdeep.io import save_tiff_imagej_compatible
 from stardist.models import StarDist3D
+from stardist.utils import gputools_available
 
+# function below searches for ImageJ exe-file (newest version). The paths can be changed.
 try:
-    ij_path = pl.Path(glob(r"C:\hyapp\fiji-win64*")[0]).joinpath(r"Fiji.app\ImageJ-win64.exe")
+    ij_path = pl.Path(glob(r"C:\hyapp\fiji-win64*")[-1]).joinpath(r"Fiji.app\ImageJ-win64.exe")
 except IndexError:
     ij_path = None
-
 
 # INPUT/OUTPUT PATHS
 # ------------------
@@ -62,26 +62,35 @@ prediction_configuration = {
     "predict_big": True,
 
     # PREDICTION VARIABLES ("None" for default values of training):
-    # These variables are the primary way to influence label prediction.
+    # --------------------
+    # These variables are the primary way to influence label prediction and set values for ALL used models!
+    # If in need of finer tuning, edit config.json's within models
     # [0-1 ; None] Non-maximum suppression, see: https://towardsdatascience.com/non-maximum-suppression-nms-93ce178e177c
     "nms_threshold": None,
     # [0-1 ; None] Probability threshold, decrease if too few objects found, increase if  too many
     "probability_threshold": None,
-    # The arguments above set values for ALL used models! If in need of finer tuning, edit config.json's within models
     # ----------------------------------------------------------------
 
-    # FOR PREDICT_BIG ##################
+    # MEMORY:
+    # ------
+    # Give tuple of available GPU memory in megabytes and fraction to allocate to prediction [0, 1].
+    # low memory_limit may lead to memory error (OoM) or give output 'CUBLAS_STATUS_NOT_INITIALIZED'
+    # e.g. (8000, 0.7) results in the use 70% of 8Gb GPU memory
+    "memory_limit": (6000, 0.8),
+
+    # Set True if predicting from large images in order to split the image into blocks.
+    "predict_big": True,
+
     # Splitting of image into segments along z, y, and x axes. Long_div and short_div split the longer and shorter axis
     # of X and Y axes, respectively. The given number indicates how many splits are performed on the given axis.
-    "z_div": 1,
-    "long_div": 3,  # Block number on the longer axis
-    "short_div": 2,  # Block number on the shorter axis
+    "z_div": 3,
+    "long_div": 12,  # Block number on the longer axis
+    "short_div": 4,  # Block number on the shorter axis
+    # ----------------------------------------------------------------
 
-    # Path to ImageJ run-file (functino below searches for exe-file on university of Helsinki computer)
     # Set to None if image/label -overlay images are not required.
     "imagej_path": ij_path
-    # Alternatively, comment line above and give full path to run-file below:
-    # "imagej_path": r'E:\Ohjelmat\Fiji.app\ImageJ-win64.exe',
+    # Alternatively, give full path to run-file, e.g. r'C:\Programs\Fiji.app\ImageJ-win64.exe',
     ####################################
 }
 
@@ -137,10 +146,13 @@ class ImageData:
         notnull : tuple
             Tuple of array indices from which intensities will be collected.
         """
-        if self.image.channels is not None:
-            return {f"Intensity Mean_Ch={ch}": self.image.get_channels(ch)[notnull]
-                    for ch in np.arange(0, self.image.channels)}
-        return {"Intensity Mean": self.image.img[notnull]}
+        with HideLog():
+            if self.image.channels is not None:
+                intensities = {f"Intensity Mean_Ch={ch}": self.image.get_channels(ch)[notnull]
+                               for ch in np.arange(0, self.image.channels)}
+            else:
+                intensities = {"Intensity Mean": self.image.img[notnull]}
+        return intensities
 
     def _test_img_shapes(self) -> None:
         """Assert that image and label file shapes match."""
@@ -249,11 +261,8 @@ class ImageFile:
     @property
     def img(self) -> np.ndarray:
         """Read image."""
-        f = io.StringIO()
-        with redirect_stderr(f):  # Used pkg outputs internal error that is of no consequence
+        with HideLog():
             img = imread(self._img)
-            out = f.getvalue()
-        _parse_errs(out)
         return img
 
     @img.setter
@@ -278,23 +287,21 @@ class ImageFile:
 
     def _define_attributes(self, filepath: pl.Path) -> None:
         """Define relevant variables based on image properties and metadata."""
-        f = io.StringIO()
-        with redirect_stderr(f) and TiffFile(filepath) as tif:
-            self._test_ax_order(tif.series[0].axes)  # Confirm correct axis order
-            self.shape = tif.series[0].shape
-            # self.datatype = get_tiff_dtype(str(tif.series[0].dtype))
-            try:  # Read channel number of image
-                self.channels = tif.imagej_metadata.get('channels')
-            except AttributeError:
-                self.channels = None
-            # self.bits = _get_tag(tif, "BitsPerSample")
+        with HideLog():
+            with TiffFile(filepath) as tif:
+                self._test_ax_order(tif.series[0].axes)  # Confirm correct axis order
+                self.shape = tif.series[0].shape
+                # self.datatype = get_tiff_dtype(str(tif.series[0].dtype))
+                try:  # Read channel number of image
+                    self.channels = tif.imagej_metadata.get('channels')
+                except AttributeError:
+                    self.channels = None
+                # self.bits = _get_tag(tif, "BitsPerSample")
 
-            # Find micron sizes of voxels
-            if not self.is_label and self.voxel_dims is None:
-                self._find_voxel_dims(tif.imagej_metadata.get('spacing'), _get_tag(tif, "YResolution"),
-                                      _get_tag(tif, "XResolution"))
-        out = f.getvalue()
-        _parse_errs(out)
+                # Find micron sizes of voxels
+                if not self.is_label and self.voxel_dims is None:
+                    self._find_voxel_dims(tif.imagej_metadata.get('spacing'), _get_tag(tif, "YResolution"),
+                                          _get_tag(tif, "XResolution"))
 
     def _find_voxel_dims(self, z_space: Union[None, float], y_res: Union[None, tuple], x_res: Union[None, tuple]):
         """Transform image axis resolutions to voxel dimensions."""
@@ -390,7 +397,7 @@ class CollectLabelData:
             print("INFO: CollectLabelData.__call__() requires path to output-folder (out_path: str, pl.Path).")
             return
         # Collect data from each label file:
-        print(f"Collecting label data.\n")
+        print("\nCollecting label data.\n")
         for ind, label_file in enumerate(self.label_files):
             self.read_labels(label_file=label_file)
             if save_data:
@@ -556,10 +563,34 @@ class OutputData:
 
 class PredictObjects:
     """Predict objects in a microscopy image using StarDist.
+
     Attributes
     ----------
-    default_config : dict
+    PredictObjects.default_config : dict
         Contains default kwargs for handling StarDist prediction.
+
+        Keywords
+        --------
+        sd_models : Union[tuple, str]
+            Model names to apply on images.
+        prediction_chs : Union[tuple, int]
+            Channel indices for the models in sd_models in respective order.
+        predict_big : bool
+            Whether to split images into blocks for prediction. If True, use z_div, long_div and short_div.
+        nms_threshold : Union[None, float]
+            If float, overrule default non-maximum suppression of the model(s).
+        probability_threshold : Union[None, float]
+            If float, overrule default probability threshold of the model(s).
+        z_div : int
+            Image block division number on z-axis.
+        long_div : int
+            Image block division number on the larger axis from XY.
+        short_div : int
+            Image block division number on the shorter axis from XY.
+        memory_limit : Tuple[int, float]
+            Tuple of available GPU memory in Mb and fraction of memory to allocate for prediction.
+        imagej_path : Union[str, pl.Path]
+            String or pathlib.Path to ImageJ-executable for overlay plotting.
     name : str
         The name of the image-file.
     image : labelCollect.ImageFile
@@ -587,6 +618,7 @@ class PredictObjects:
         "z_div": 1,
         "long_div": 2,
         "short_div": 1,
+        "memory_limit": None,
         "imagej_path": None
     }
 
@@ -605,6 +637,9 @@ class PredictObjects:
         config = deepcopy(PredictObjects.default_config)
         config.update({key: value for key, value in prediction_config.items()})
         self.config = config
+        if self.config.get('memory_limit') is not None and gputools_available():
+            mem_limit = self.config.get('memory_limit')
+            limit_gpu_memory(mem_limit[1], allow_growth=False, total_memory=mem_limit[0])
 
         # Create list of model/channel pairs to use
         if isinstance(self.config.get("sd_models"), tuple) and isinstance(self.config.get("prediction_chs"), tuple):
@@ -752,6 +787,16 @@ class HidePrint:
         sys.stdout = self._original_stdout
 
 
+class HideLog:
+    """Hide logging output from other packages."""
+
+    def __enter__(self, level: int = 30):
+        captureWarnings(True), disable(level)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        captureWarnings(False), disable(NOTSET)
+
+
 class ShapeMismatchError(Exception):
     """Exception raised when microscopy and label image have differing shapes."""
 
@@ -799,12 +844,10 @@ def corresponding_imgs(file_name: str, target_path: str) -> list:
 
 def _get_tag(tif: TiffFile, tag: str) -> Union[None, str, int, float, tuple]:
     """Return metadata with given tag-string as name from first page of the TIFF-file."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        try:
-            return tif.pages[0].tags.get(tag).value
-        except AttributeError:
-            return None
+    try:
+        return tif.pages[0].tags.get(tag).value
+    except AttributeError:
+        return None
 
 
 def create_output_dirs(out_path: Union[str, pl.Path], lbl_path: Union[str, pl.Path]) -> None:
@@ -864,17 +907,6 @@ def get_tiff_dtype(numpy_dtype: str) -> int:
     """Get TIFF datatype of image."""
     num = numpy_dtype.split('int')[-1]
     return ['8', 'placeholder', '16', '32'].index(num) + 1
-
-
-def _parse_errs(out: str):
-    """Parse errors from a string of redirected stderr-stream."""
-    out = out.split(r"\n")
-    out_errs = [estring for estring in out if not estring.startswith("TiffPage 0: TypeError: read_bytes()") and
-                estring != '']
-    if out_errs:
-        print("TiffFile stderr:")
-        for err in out_errs:
-            print(f" - {err}")
 
 
 def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf: dict = None,
