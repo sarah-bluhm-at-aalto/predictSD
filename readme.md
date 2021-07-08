@@ -37,7 +37,7 @@ image = ps.ImageData("C:\testSet\images\ctrl_2021-02-05_101657.tiff")
 config = {'return_details': False,
           'sd_models': ("GFP10x", "DAPI10x"),                   # Names of models to apply for the image
           'prediction_chs': (0, 1),                             # Respective channel indices to apply the models on
-          'imagej_path': r"C:\Fiji.app\ImageJ-win64.exe"}     # Allows creation of flat image/label overlays
+          'imagej_path': r"C:\Fiji.app\ImageJ-win64.exe"}       # Allows creation of flat image/label overlays
 
 predictor = ps.PredictObjects(image, **config)                  # Initiate prediction class
 predictor(out_path=label_out, overlay_path=results_out)         # Perform prediction for objects in image
@@ -55,7 +55,7 @@ results_out = r"C:\testSet\results"
 label_folder = r"C:\testSet\labels"
 
 labels = ps.corresponding_imgs("ctrl_1146", label_folder)       # Find existing label files for an image.
-image = ps.ImageData(r"C:\testSet\images\ctrl_1146.tif",     # Initiate class for collecting label information
+image = ps.ImageData(r"C:\testSet\images\ctrl_1146.tif",        # Initiate class for collecting label information
                      paths_to_labels=labels)
 # Channel names for the labels if missing/uninformative. Alternatively, set label_names=None
 names = ("GFP", "DAPI")
