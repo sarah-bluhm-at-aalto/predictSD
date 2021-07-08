@@ -1,15 +1,14 @@
 # predictSD
-**Prediction of cellular objects in 3D using StarDist<sup>1,2</sup> and collection of label information into a data
+**Prediction of cellular objects in 3D using StarDist<sup>(1,2)</sup> and collection of label information into a data
 table.** The collected information includes object positions, maximal areas, volumes, and channel mean intensities. The
 data can automatically be saved in LAM-usable format, if so wanted. PredictSD can also be used to collect information
 on objects within TIFF-images from any segmentation source when provided together with the intensity images and if
 each label in the segmentation images is marked by a single, unique value.
 
 ## Installation
-PredictSD requires an environment that is capable of running StarDist. For the creation of such environment, see
+PredictSD requires an environment that is capable of running StarDist. For additional information, see
 [StarDist's GitHub-page](https://github.com/stardist/stardist/). Required packages are listed in
-'predictSD/docs/requirements.txt'. For installation on Win10 using CUDA 11.4, see
-'predictSD/docs/environment_setup.txt'.
+'docs/requirements.txt'. For installation on Win10 using CUDA 11.4, see 'docs/environment_setup.txt'.
 
 ## labelCollect.py
 The whole process is handled through labelCollect.py, which contains information on use (open file in text editor). The
@@ -18,26 +17,27 @@ contain multiple channels, and a separate prediction model can be applied to eac
 
 ### Output
 
-labelCollect.py outputs tiff-images of the predicted labels, saves label information to either LAM-runnable
-folders/files or dumps them in a single output folder, and creates image/label -overlays by calling overlayLabels.ijm
-if given path to an ImageJ-executable.
+labelCollect.py outputs tiff-images of the predicted labels and saves label information to either LAM-runnable
+folders/files or dumps them in a single output folder. If given a path to a Fiji/ImageJ<sup>(3)</sup> executable, the  prediction can
+create image/label-overlays by calling predictSD/overlayLabels.ijm.
 
 ### Usage
-The simplest way to perform label prediction and data collection is to edit the variables on top of labelCollect.py
-and then run the file. The script is designed to analyze all tiff-images found at an input path.
+**The simplest way to perform label prediction and data collection is to edit the variables on top of labelCollect.py
+and then run the file.** The script is designed to analyze all tiff-images found at an input path.
 
 Alternatively, you can import predictSD and create a new pipeline. In the snippet below, the prediction and collection
 is performed to a single image file:
 ```python
 import predictSD as ps
 
-label_out = r"C:\testSet\masks"
+label_out = r"C:\testSet\labels"
 results_out = r"C:\testSet\results"
 
-image = ps.ImageData(r"C:\testSet\images\ctrl_2021-02-05_101657.tiff")
+image = ps.ImageData("C:\testSet\images\ctrl_2021-02-05_101657.tiff")
 config = {'return_details': False,
           'sd_models': ("GFP10x", "DAPI10x"),                   # Names of models to apply for the image
-          'prediction_chs': (0, 1)}                             # Respective channel indices to apply the models on
+          'prediction_chs': (0, 1),                             # Respective channel indices to apply the models on
+          'imagej_path': r"C:\Fiji.app\ImageJ-win64.exe"}     # Allows creation of flat image/label overlays
 
 predictor = ps.PredictObjects(image, **config)                  # Initiate prediction class
 predictor(out_path=label_out, overlay_path=results_out)         # Perform prediction for objects in image
@@ -45,21 +45,21 @@ data = ps.CollectLabelData(image, convert_to_micron=True)       # Initiate class
 data(out_path=label_out, lam_compatible=True, save_data=True)   # Collect object intensities, area, volume, etc.
 ```
 If labels already exist, the images must be named _samplename.tif(f)_ and _samplename(\_channelname).labels.tif(f)_,
-where text inside parentheses are optional. For example, if name of image is 'ctrl_1146.tif' then labels could
+where text inside parentheses are optional. For example, if name of an image is 'ctrl_1146.tif' then labels could
 be named '_ctrl_1146.labels.tif_' or with additional channel's or used model's name, e.g. '_ctrl_1146_Ch=1.labels.tif_'
 or '_ctrl_1146_DAPI10x.labels.tif_', respectively.
 
 Information from existing labels could be collected with:
 ```python
 results_out = r"C:\testSet\results"
-mask_folder = r"C:\testSet\masks"
+label_folder = r"C:\testSet\labels"
 
-labels = ps.corresponding_imgs("ctrl_1146", mask_folder)        # Find existing label files for an image.
-image = ps.ImageData(r"C:\testSet\images\ctrl_1146.tif",        # Initiate class for collecting label information
+labels = ps.corresponding_imgs("ctrl_1146", label_folder)       # Find existing label files for an image.
+image = ps.ImageData(r"C:\testSet\images\ctrl_1146.tif",     # Initiate class for collecting label information
                      paths_to_labels=labels)
-# If label files do not have the additional channelname-identifiers, give names to CollectLabelData
-names = ("GFP", "DAPI")         # Alternatively, label_names=None
-# Initiate label collection and call to save results in csv-files 
+# Channel names for the labels if missing/uninformative. Alternatively, set label_names=None
+names = ("GFP", "DAPI")
+# Initiate label collection and save results
 ps.CollectLabelData(image, convert_to_micron=True, label_names=names
                     )(out_path=results_out, lam_compatible=True, save_data=True)
 ```
@@ -68,14 +68,15 @@ Available GPU memory is a limiting factor for object prediction on larger images
 allocatable fraction can be provided to _prediction_config_ as a tuple when initiating predictSD.PredictObjects with the
 keyword _'memory_limit'_ . Similarly, the keyword _'predict_big'_ can be set as True (default) to split the image into
 more manageable blocks. The number of divisions on each axis can be defined with the keywords _'z_div'_, _'long_div'_,
-and _'short_div'_.
+and _'short_div'_. The smaller image blocks are defined by StarDist and include overlaps, i.e. the splitting
+should not affect quality of the segmentation at the edges.
 ```python
-config = {'sd_models': "DAPI10x", 'prediction_chs': 1,
-          'memory_limit': (8000, 0.9),                  # Allocate 90% of 8Gb total GPU memory
-          'predict_big': True,                          # Image will be split into blocks
-          'z_div': 2,                                   # Blocks on Z-axis
-          'long_div': 8,                                # Blocks on the longer axis of XY
-          'short_div': 3}                               # Blocks on the shorter axis of XY
+config = {'sd_models': "DAPI20x", 'prediction_chs': 1,
+          'memory_limit': (8000, 0.9),                          # Allocate 90% of 8Gb total GPU memory
+          'predict_big': True,                                  # Image will be split into blocks
+          'z_div': 2,                                           # Blocks on Z-axis
+          'long_div': 8,                                        # Blocks on the longer axis of XY
+          'short_div': 3}                                       # Blocks on the shorter axis of XY
 predictor = ps.PredictObjects(image, **config)  
 
 ```
@@ -109,16 +110,16 @@ Imaged with Aurox Clarity.
 
 
 ## dropHeaders.py
-Used to drop extra header rows from datafiles in LAM-hierarchical sample-folders so that the first row of files contains
-the column labels. LAM expects input data to have exact header row index. Running this script on Imaris exported files
-is required when combined with data from labelCollect.py.
+Used to drop extra header rows from csv-files exported from Imaris. The files are expected to be in LAM-hierarchical
+sample-folders. LAM expects all input data to have an exact index for column names, and removal of the headers is
+required when combining data from Imaris with data from labelCollect.py.
 
 ------------------------
 
 ### LAM - Linear Analysis of Midgut
 
 Image analysis method for regionally defined organ-wide cellular phenotyping of the Drosophila midgut.
-1. [Journal article (in revision)](https://www.biorxiv.org/content/10.1101/2021.01.20.427422v1)
+1. [Journal article (accepted July 1st, 2021)](https://www.biorxiv.org/content/10.1101/2021.01.20.427422v1)
 
 2. [Repository](https://github.com/hietakangas-laboratory/LAM)
 
@@ -138,11 +139,15 @@ Jaakko Mattila - [Mattila laboratory](https://www.helsinki.fi/en/researchgroups/
 Jack Morikka - [Mattila laboratory](https://www.helsinki.fi/en/researchgroups/metabolism-and-signaling/)
 
 ### References
-1.  Uwe Schmidt, Martin Weigert, Coleman Broaddus, and Gene Myers.
-    Cell Detection with Star-convex Polygons.
-    International Conference on Medical Image Computing and Computer-Assisted Intervention (MICCAI), Granada, Spain, September 2018.
+1.  Uwe Schmidt, Martin Weigert, Coleman Broaddus, and Gene Myers. Cell Detection with Star-convex Polygons.
+    International Conference on Medical Image Computing and Computer-Assisted Intervention (MICCAI), Granada, Spain,
+    September 2018. https://doi.org/10.1007/978-3-030-00934-2_30
+    
 
+2.  Martin Weigert, Uwe Schmidt, Robert Haase, Ko Sugawara, and Gene Myers. Star-convex Polyhedra for 3D Object
+    Detection and Segmentation in Microscopy. The IEEE Winter Conference on Applications of Computer Vision (WACV),
+    Snowmass Village, Colorado, March 2020. https://doi.org/10.1109/WACV45572.2020.9093435
+    
 
-2.  Martin Weigert, Uwe Schmidt, Robert Haase, Ko Sugawara, and Gene Myers.
-    Star-convex Polyhedra for 3D Object Detection and Segmentation in Microscopy.
-    The IEEE Winter Conference on Applications of Computer Vision (WACV), Snowmass Village, Colorado, March 2020
+3.  Schindelin, J., Arganda-Carreras, I., Frise, E. et al. Fiji: an open-source platform for biological-image analysis.
+    Nat Methods 9, 676–682 (2012). https://doi.org/10.1038/nmeth.2019. 

@@ -5,7 +5,7 @@ npm
 pybind11
 gputools
 stardist
-numpy>=1.21
+numpy
 pandas
 pathlib
 tifffile

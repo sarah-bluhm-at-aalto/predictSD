@@ -13,16 +13,18 @@ Setup will be different depending on operating system.
 	a) unpack to C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4\
 5. Add system variables (Control panel > Edit system environment variables):
 	   [NAME & PATH]
-	a) INCLUDE C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4\include
-	b) LIB C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4\lib\x64
+	a) INCLUDE  C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4\include
+	b) LIB      C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4\lib\x64
 6. Create Python/Anaconda environment
-	a) 1. conda create -n stardistenv python=3.9
+	a) Anaconda:
+	   1. conda create -n stardistenv python=3.9
 	   2. conda activate stardistenv
 	       -------OR-------
-	   1. python -m virtualenv stardistenv
+	   Python:
+	   1. PATH\TO\Python39\python.exe -m virtualenv stardistenv
 	   2. stardistenv\Scripts\activate
 
 	b) Install packages:
-	   pip install tensorflow jupyter-tensorboard nodejs npm pybind11 gputools stardist pandas pathlib tifffile scikit-tensor-py3 pyopencl
+	   pip install tensorflow==2.5.* jupyter-tensorboard nodejs npm pybind11 gputools stardist numpy>=1.20 pandas pathlib tifffile scikit-tensor-py3 pyopencl
 	!!! on Windows, install PyOpenCL from pre-made binary (https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyopencl):
-	   i.e. above, in pip install-command change pyopencl to path\to\pyopencl.whl
+	   i.e. above, in pip install-command change pyopencl to "path\to\pyopencl.whl"

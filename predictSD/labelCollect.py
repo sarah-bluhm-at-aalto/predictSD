@@ -58,9 +58,6 @@ prediction_configuration = {
     #  -> Array indexing however is changed for Python; either use input images with a single channel or all of them
     "prediction_chs": (0, 1),      # (1, 0)
 
-    # Set True if predicting from large images, e.g. whole midgut.
-    "predict_big": True,
-
     # PREDICTION VARIABLES ("None" for default values of training):
     # --------------------
     # These variables are the primary way to influence label prediction and set values for ALL used models!
@@ -73,9 +70,9 @@ prediction_configuration = {
 
     # MEMORY:
     # ------
-    # Give tuple of available GPU memory in megabytes and fraction to allocate to prediction [0, 1].
-    # low memory_limit may lead to memory error (OoM) or give output 'CUBLAS_STATUS_NOT_INITIALIZED'
-    # e.g. (8000, 0.7) results in the use 70% of 8Gb GPU memory
+    # Give tuple of available GPU memory in megabytes and fraction to dedicate to prediction [0, 1].
+    # e.g. (8000, 0.7) results in the use 70% of 8Gb GPU memory. If set to None, memory is dedicated as needed but might
+    # lead to 'out of memory error' (OoM). Low memory can also cause print-out 'CUBLAS_STATUS_NOT_INITIALIZED'.
     "memory_limit": (6000, 0.8),
 
     # Set True if predicting from large images in order to split the image into blocks.
@@ -83,9 +80,9 @@ prediction_configuration = {
 
     # Splitting of image into segments along z, y, and x axes. Long_div and short_div split the longer and shorter axis
     # of X and Y axes, respectively. The given number indicates how many splits are performed on the given axis.
-    "z_div": 3,
-    "long_div": 12,  # Block number on the longer axis
-    "short_div": 4,  # Block number on the shorter axis
+    "z_div": 1,
+    "long_div": 4,  # Block number on the longer axis
+    "short_div": 2,  # Block number on the shorter axis
     # ----------------------------------------------------------------
 
     # Set to None if image/label -overlay images are not required.
@@ -272,7 +269,7 @@ class ImageFile:
 
     @property
     def label_name(self) -> str:
-        """Get label's channel name."""
+        """Get label's channel/model name."""
         if not self.is_label:
             print("Image is not a label file and has no label name.")
         return self._label_name
@@ -307,7 +304,7 @@ class ImageFile:
         """Transform image axis resolutions to voxel dimensions."""
         if None in (z_space, y_res, x_res):  # If some values are missing from metadata
             dims = [1. if z_space is None else z_space] + [1. if v is None else v[1]/v[0] for v in (y_res, x_res)]
-            print("WARNING: Resolution on all axes not found in image metadata.")
+            print("INFO: Resolution on all axes not found in image metadata.")
             print(f"-> Using default voxel size of 1 for missing axes; ZYX={tuple(dims)}")
         else:
             dims = [z_space] + [v[1]/v[0] for v in (y_res, x_res)]
@@ -455,6 +452,7 @@ class CollectLabelData:
         return output
 
     def get_label_names(self):
+        """Get label names of all label files defined for the instance."""
         return [ImageFile(p, is_label=True).label_name for p in self.label_files]
 
     def read_labels(self, label_file: Union[str, pl.Path] = None):
