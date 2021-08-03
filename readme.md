@@ -119,7 +119,7 @@ required when combining data from Imaris with data from labelCollect.py.
 ### LAM - Linear Analysis of Midgut
 
 Image analysis method for regionally defined organ-wide cellular phenotyping of the Drosophila midgut.
-1. [Journal article (accepted July 1st, 2021)](https://www.biorxiv.org/content/10.1101/2021.01.20.427422v1)
+1. [Journal article](https://doi.org/10.1016/j.crmeth.2021.100059)
 
 2. [Repository](https://github.com/hietakangas-laboratory/LAM)
 
