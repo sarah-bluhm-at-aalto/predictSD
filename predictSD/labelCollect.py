@@ -26,9 +26,9 @@ except IndexError:
 
 # INPUT/OUTPUT PATHS
 # ------------------
-image_path = r'C:\testSet\images'
-label_path = r'C:\testSet\masks'
-output_path = r'C:\testSet\results'
+image_path = r'C:\Users\artoviit\StarDist_testing\testSet\images'
+label_path = r'C:\Users\artoviit\StarDist_testing\testSet\masks'
+output_path = r'C:\Users\artoviit\StarDist_testing\testSet\results'
 
 # Whether to save label data in LAM-compatible format and folder hierarchy
 # This expects that the images are named in a compatible manner, i.e. "samplegroup_samplename.tif"
@@ -40,7 +40,7 @@ coords_to_microns = True  # The voxel dimensions are read from metadata (see: Im
 
 # If labels already exist set to True. If False, the labels will be predicted based on microscopy images.
 # Otherwise only result tables will be constructed.
-label_existence = False
+label_existence = True
 
 # ZYX-axes voxel dimensions in microns. Size is by default read from image metadata.
 # KEEP AS None UNLESS SIZE METADATA IS WRONG. Dimensions are given as tuple, i.e. force_voxel_size=(Zdim, Ydim, Xdim)
@@ -411,8 +411,42 @@ class CollectLabelData:
         grouped_voxels = voxel_data.groupby("ID")
         return grouped_voxels.size() * np.prod(self.image_data.voxel_dims)
 
+    def filter(self, filter_list: list) -> None:
+        """Filter an output DataFrame based on each label's value in given column.
+        Parameters
+        ----------
+        filter_list : list
+            List containing a tuple for each filter. Each tuple must contain 1) index of data or name/model, 2) name of
+            column where filter is applied, 3) filtering value, and 4) 'min' or 'max' to indicate if filtering value is
+            the minimum or maximum allowed value in the data column. If the first item in tuple is 'all', the filter is
+            performed on all output DataFrames.
+            For example, filter_list = [('all', 'Area', 5.0, 'min'), ('DAPI10x', 'Volume', 750.0, 'max')] would filter
+            all labels with area less than 5, and would additionally filter labels with volume more than 750 from the
+            DAPI10x information.
+        """
+        for filter_tuple in filter_list:
+            items = None
+            name = filter_tuple[0]
+            if name.lower() == 'all':
+                items = [range(len(self.label_files))]
+            elif isinstance(name, str):
+                try:
+                    items = [self.get_label_names().index(name)]
+                except ValueError:
+                    print(f"Filtering with {filter_tuple} failed! Item '{name}' not found in {self.get_label_names()}")
+            elif isinstance(name, int):
+                if len(self.label_files) < name+1:
+                    print(f"Filtering with {filter_tuple} failed! Index {name} does not point to any item in "
+                          f"{self.get_label_names()}.")
+                    continue
+                items = [name]
+            if items is not None:
+                for item in items:
+                    self.output.filter_output(index=item, column=filter_tuple[1], value=filter_tuple[2],
+                                              filter_type=filter_tuple[3])
+
     def gather_data(self, label_file: Union[str, pl.Path]) -> Union[pd.DataFrame, None]:
-        """Get output DataFrame containing decriptive values of the labels.
+        """Get output DataFrame containing descriptive values of the labels.
         Parameters
         ----------
         label_file : str, pl.Path
@@ -438,8 +472,8 @@ class CollectLabelData:
 
         # Calculate other variables of interest
         output = output.assign(
-            Volume          = self._get_volumes(voxel_data),
-            Area_Max        = self._get_area_maximums(voxel_data)
+            Volume      = self._get_volumes(voxel_data),
+            Area        = self._get_area_maximums(voxel_data)
         )
 
         # Get intensities and calculate related variables
@@ -492,14 +526,17 @@ class CollectLabelData:
         if isinstance(item, int) or isinstance(item, str) or isinstance(item, pl.Path):
             object_label, _, data = self.output[item]
             label_name = f"{object_label}" if label_name is None else label_name
-        else:
+        elif isinstance(item, pd.DataFrame):
             data = item
+        else:
+            print("Type of given item is not supported.")
+            return
 
         if lam_compatible:
             file = "Position.csv"
             save_path = out_path.joinpath(self.image_data.name, f"StarDist_{label_name}_Statistics", file)
             save_path.parent.mkdir(exist_ok=True, parents=True)
-            data = data.rename(columns={"X": "Position X", "Y": "Position Y", "Z": "Position Z", "Area_Max": "Area"})
+            data = data.rename(columns={"X": "Position X", "Y": "Position Y", "Z": "Position Z"})
             # data = self.output.lam_output()
         else:
             file = f"{self.image_data.name}_{label_name}.csv"
@@ -534,7 +571,8 @@ class OutputData:
     def __setitem__(self, key: Union[int, str, pl.Path], data: Union[None, pd.DataFrame]) -> None:
         if isinstance(key, str) or isinstance(key, pl.Path):
             key = self._label_files.index(str(pl.Path(key)))
-        self._output[key] = data
+        if data is None or isinstance(data, pd.DataFrame):
+            self._output[key] = data
 
     def __getitem__(self, item: Union[int, str, pl.Path] = 0) -> Tuple[Union[None, str], Union[None, str, pl.Path],
                                                                        Union[None, pd.DataFrame]]:
@@ -550,13 +588,38 @@ class OutputData:
             print(f"Output data not found for {self._label_files[item]}.")
         return self._label_names[item], str(self._label_files[item]), self._output[item]
 
-    def lam_output(self, label_ind: int = 0) -> Union[None, pd.DataFrame]:
-        """Get output data with column names in LAM-compatible format."""
-        output = self._output[label_ind]
-        if isinstance(output, pd.DataFrame):
-            return output.rename(columns={"X": "Position X", "Y": "Position Y", "Z": "Position Z", "Area_Max": "Area"})
-        else:
-            return None
+    def filter_output(self, index: int, column: str, value: float, filter_type: str) -> None:
+        """Filter an output DataFrame based on each label's value in given column.
+        Parameters
+        ----------
+        index : int
+            Index position of the label file in self.output.
+        column : str
+            Column label to use in filtering.
+        value : float
+            Value to use as a filtering limit.
+        filter_type : str
+            Direction of filtering. Use 'min' to filter all labels with value lower than the one given, or 'max' to
+            filter all labels with higher value.
+        """
+        output_data = self._output[index]
+        try:
+            if filter_type=='min':
+                filtered_output = output_data.loc[column >= value,]
+            elif filter_type == 'max':
+                filtered_output = output_data.loc[column <= value,]
+        except IndexError:
+            print(f"Given column name '{column}' not found!\nAvailable columns: {output_data.columns}")
+            return
+        self._output[index] = filtered_output
+
+    # def lam_output(self, label_ind: int = 0) -> Union[None, pd.DataFrame]:
+    #     """Get output data with column names in LAM-compatible format."""
+    #     output = self._output[label_ind]
+    #     if isinstance(output, pd.DataFrame):
+    #         return output.rename(columns={"X": "Position X", "Y": "Position Y", "Z": "Position Z", "Area": "Area"})
+    #     else:
+    #         return None
 
 
 class PredictObjects:
