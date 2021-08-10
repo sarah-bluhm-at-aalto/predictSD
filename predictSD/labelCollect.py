@@ -26,9 +26,9 @@ except IndexError:
 
 # INPUT/OUTPUT PATHS
 # ------------------
-image_path = r'C:\Users\artoviit\StarDist_testing\testSet\images'
-label_path = r'C:\Users\artoviit\StarDist_testing\testSet\masks'
-output_path = r'C:\Users\artoviit\StarDist_testing\testSet\results'
+image_path = r'C:\testSet\images'
+label_path = r'C:\testSet\masks'
+output_path = r'C:\testSet\results'
 
 # Whether to save label data in LAM-compatible format and folder hierarchy
 # This expects that the images are named in a compatible manner, i.e. "samplegroup_samplename.tif"
@@ -40,7 +40,7 @@ coords_to_microns = True  # The voxel dimensions are read from metadata (see: Im
 
 # If labels already exist set to True. If False, the labels will be predicted based on microscopy images.
 # Otherwise only result tables will be constructed.
-label_existence = True
+label_existence = False
 
 # ZYX-axes voxel dimensions in microns. Size is by default read from image metadata.
 # KEEP AS None UNLESS SIZE METADATA IS WRONG. Dimensions are given as tuple, i.e. force_voxel_size=(Zdim, Ydim, Xdim)
@@ -57,6 +57,13 @@ prediction_configuration = {
     # NOTE that the channel positions remain the same even if split to separate images with ImageJ!
     #  -> Array indexing however is changed for Python; either use input images with a single channel or all of them
     "prediction_chs": (0, 1),      # (1, 0)
+
+    # List of filters to apply to predicted labels. Each tuple must contain 1) index of data or name/model, 2) name of
+    # column where filter is applied, 3) filtering value, and 4) 'min' or 'max' to indicate if filtering value is
+    # the min or max allowed value. If the first item in tuple is 'all', filter is applied on all models.
+    # E.g., "filters": [('all', 'Area', 15.0, 'min'), ('DAPI10x', 'Volume', 750.0, 'max')]
+    #  -> filters all labels with Z-slice max area less than 15 and DAPI10x labels with volume > 750
+    "filters": [('all', 'Area', 15.0, 'min')],
 
     # PREDICTION VARIABLES ("None" for default values of training):
     # --------------------
@@ -346,10 +353,12 @@ class CollectLabelData:
     -------
     get_label_names()
         Returns the final component of each label-file, i.e. its model or channel identifier.
+    filter(filter_list: list)
+        Apply a filter to data from one/all model(s).
     read_labels(label_file = None)
         Collect label info from label-images. Reads only label_file if it is given, else collects data from all files in
         self.label_files.
-    save(self, out_path, item = 0, label_name = None, lam_compatible = True, decimal_precision = 4)
+    save(out_path, item = 0, label_name = None, lam_compatible = True, decimal_precision = 4)
     """
 
     def __init__(self, image_data: ImageData, label_file: Union[str, pl.Path] = None, label_names: list = None,
@@ -381,7 +390,7 @@ class CollectLabelData:
         assert len(self.label_files) == len(names)
         self.output = OutputData(self.label_files, names)
 
-    def __call__(self, save_data: bool = False, out_path: Union[str, pl.Path] = None, **kwargs):
+    def __call__(self, save_data: bool = False, out_path: Union[str, pl.Path] = None, filters: list = None, **kwargs):
         """Read all label files and save label-specific information.
         Parameters
         ----------
@@ -389,6 +398,8 @@ class CollectLabelData:
             Whether to save the collected data as a file. The data is stored to self.output in any case.
         out_path : str, pl.Path
             Path to the save folder if save_data is True.
+        filters : list
+            List of tuples containing filters to apply. See CollectLabelData.filter().
         """
         if save_data and out_path is None:
             print("INFO: CollectLabelData.__call__() requires path to output-folder (out_path: str, pl.Path).")
@@ -397,7 +408,10 @@ class CollectLabelData:
         print("\nCollecting label data.\n")
         for ind, label_file in enumerate(self.label_files):
             self.read_labels(label_file=label_file)
-            if save_data:
+        if filters is not None:
+            self.filter(filters)
+        if save_data:
+            for ind in range(len(self.label_files)):
                 self.save(out_path, item=ind, **kwargs)
 
     def _get_area_maximums(self, voxel_data: pd.DataFrame) -> np.array:
@@ -425,22 +439,24 @@ class CollectLabelData:
             DAPI10x information.
         """
         for filter_tuple in filter_list:
+            fail_message = f"Filtering with {filter_tuple} failed"
             items = None
             name = filter_tuple[0]
-            if name.lower() == 'all':
-                items = [range(len(self.label_files))]
-            elif isinstance(name, str):
-                try:
-                    items = [self.get_label_names().index(name)]
-                except ValueError:
-                    print(f"Filtering with {filter_tuple} failed! Item '{name}' not found in {self.get_label_names()}")
+            if isinstance(name, str):
+                if name.lower() == 'all':
+                    items = [i for i in range(len(self.label_files))]
+                else:
+                    try:
+                        items = [self.get_label_names().index(name)]
+                    except ValueError:
+                        print(f"{fail_message} - Item '{name}' not found in {self.get_label_names()}\n")
             elif isinstance(name, int):
                 if len(self.label_files) < name+1:
-                    print(f"Filtering with {filter_tuple} failed! Index {name} does not point to any item in "
-                          f"{self.get_label_names()}.")
+                    print(f"{fail_message} - Index {name} is too large for object of length "
+                          f"{len(self.get_label_names())}.\n")
                     continue
                 items = [name]
-            if items is not None:
+            if items is not None and len(items) > 0:
                 for item in items:
                     self.output.filter_output(index=item, column=filter_tuple[1], value=filter_tuple[2],
                                               filter_type=filter_tuple[3])
@@ -537,7 +553,7 @@ class CollectLabelData:
             save_path = out_path.joinpath(self.image_data.name, f"StarDist_{label_name}_Statistics", file)
             save_path.parent.mkdir(exist_ok=True, parents=True)
             data = data.rename(columns={"X": "Position X", "Y": "Position Y", "Z": "Position Z"})
-            # data = self.output.lam_output()
+            # data = self.output.lamify()
         else:
             file = f"{self.image_data.name}_{label_name}.csv"
             save_path = out_path.joinpath(file)
@@ -552,7 +568,7 @@ class OutputData:
     """Hold label name, file, and data of output.
     Methods
     -------
-    lam_output(label_ind: int = 0) -> Union[None, pd.DataFrame]
+    lamify(label_ind: int = 0) -> Union[None, pd.DataFrame]
         Return output data at given index as DataFrame with LAM-compatible column names.
 
     Raises
@@ -603,23 +619,33 @@ class OutputData:
             filter all labels with higher value.
         """
         output_data = self._output[index]
-        try:
-            if filter_type=='min':
-                filtered_output = output_data.loc[column >= value,]
-            elif filter_type == 'max':
-                filtered_output = output_data.loc[column <= value,]
-        except IndexError:
-            print(f"Given column name '{column}' not found!\nAvailable columns: {output_data.columns}")
+        if not isinstance(output_data, pd.DataFrame):
+            if output_data is None:
+                message = "Missing label information. Use CollectLabelData.read_labels()."
+            else:
+                message = f"Object at index '{index}' is not a DataFrame."
+            print(f"Filter failed - {message}\n")
             return
-        self._output[index] = filtered_output
 
-    # def lam_output(self, label_ind: int = 0) -> Union[None, pd.DataFrame]:
-    #     """Get output data with column names in LAM-compatible format."""
-    #     output = self._output[label_ind]
-    #     if isinstance(output, pd.DataFrame):
-    #         return output.rename(columns={"X": "Position X", "Y": "Position Y", "Z": "Position Z", "Area": "Area"})
-    #     else:
-    #         return None
+        try:
+            if filter_type == 'min':
+                filtered_output = output_data.loc[output_data.loc[:, column] >= value, :]
+            elif filter_type == 'max':
+                filtered_output = output_data.loc[output_data.loc[:, column] <= value, :]
+            else:
+                print("Filter failed - Type must be either 'min' or 'max'.")
+                return
+            self._output[index] = filtered_output
+        except IndexError:
+            print(f"Given column name '{column}' not found!\nAvailable columns: {output_data.columns}\n")
+
+    def lamify(self, label_ind: int = 0) -> Union[None, pd.DataFrame]:
+        """Get output data with column names in LAM-compatible format."""
+        output = self._output[label_ind]
+        if isinstance(output, pd.DataFrame):
+            return output.rename(columns={"X": "Position X", "Y": "Position Y", "Z": "Position Z"})
+        else:
+            return None
 
 
 class PredictObjects:
@@ -1007,6 +1033,7 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
 
         if labels_exist:  # Find path to label images if existing
             label_files = corresponding_imgs(pl.Path(image_file).stem, lbl_path)
+            print(f"Using pre-existing label files:\n{label_files}")
         else:
             label_files = None
 
@@ -1022,7 +1049,8 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
 
         # Get information on label objects
         label_data = CollectLabelData(images, convert_to_micron=to_microns)
-        label_data(out_path=out_path, lam_compatible=create_lam_output, save_data=True)
+        label_data(out_path=out_path, lam_compatible=create_lam_output, filters=prediction_conf.get('filters'),
+                   save_data=True)
 
         # Print description of collected data
         for data in label_data.output:

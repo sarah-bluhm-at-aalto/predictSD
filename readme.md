@@ -42,7 +42,8 @@ config = {'return_details': False,
 predictor = ps.PredictObjects(image, **config)                  # Initiate prediction class
 predictor(out_path=label_out, overlay_path=results_out)         # Perform prediction for objects in image
 data = ps.CollectLabelData(image, convert_to_micron=True)       # Initiate class for collecting label information
-data(out_path=label_out, lam_compatible=True, save_data=True)   # Collect object intensities, area, volume, etc.
+data(out_path=label_out, lam_compatible=True, save_data=True,   # Collect object intensities, area, volume, etc.
+     filters=[('all', 'Area', 15.0, 'min')])                    # Filters can also be applied to the label information
 ```
 If labels already exist, the images must be named _samplename.tif(f)_ and _samplename(\_channelname).labels.tif(f)_,
 where text inside parentheses are optional. For example, if name of an image is 'ctrl_1146.tif' then labels could
