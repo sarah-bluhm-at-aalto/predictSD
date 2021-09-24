@@ -63,7 +63,7 @@ prediction_configuration = {
     # the min or max allowed value. If the first item in tuple is 'all', filter is applied on all models.
     # E.g., "filters": [('all', 'Area', 15.0, 'min'), ('DAPI10x', 'Volume', 750.0, 'max')]
     #  -> filters all labels with Z-slice max area less than 15 and DAPI10x labels with volume > 750
-    "filters": [('all', 'Area', 10.0, 'min')],
+    "filters": [('all', 'Area', 5.0, 'min')], #, ('DAPI10x', 'Intensity Mean_Ch=1', 150, 'min')],
 
     # PREDICTION VARIABLES ("None" for default values of training):
     # --------------------
@@ -474,31 +474,55 @@ class CollectLabelData:
             DataFrame with voxel values of each label collapsed into wide-format observations, i.e. each row represents
             one object.
         """
+        def __intensity_slope(yaxis, xaxis):
+            # rescale to [0,1]
+            yx = (yaxis - np.min(yaxis)) / np.ptp(yaxis)
+            xaxis = xaxis.iloc(axis=0)[yx.index.min():yx.index.max() + 1]
+            xx = (xaxis - np.min(xaxis)) / np.ptp(xaxis)
+            try:
+                return np.polyfit(xx, yx, deg=1)[0]
+            except np.linalg.LinAlgError:
+                return np.nan
+
         # Find coordinates and intensities of each labelled voxel
+        coord_cols = ("Z", "Y", "X")
         voxel_data = self.image_data.labelled_voxels(item=label_file)
         if voxel_data is None:
             print(f"WARNING: No labels found on {label_file}.")
             return None
         if self.convert_coordinates:
-            cols = ("Z", "Y", "X")
-            voxel_data.loc[:, cols] = voxel_data.loc[:, cols].multiply(self.image_data.voxel_dims)
+            voxel_data.loc[:, coord_cols] = voxel_data.loc[:, coord_cols].multiply(self.image_data.voxel_dims)
+
+        voxel_sorted = voxel_data.sort_values(by='ID').reset_index(drop=True)
 
         # Collapse individual voxels into label-specific averages.
-        output = voxel_data.groupby("ID").mean()
+        output = voxel_sorted.groupby("ID").mean()
 
         # Calculate other variables of interest
         output = output.assign(
-            Volume      = self._get_volumes(voxel_data),
-            Area        = self._get_area_maximums(voxel_data)
+            Volume      = self._get_volumes(voxel_sorted),
+            Area        = self._get_area_maximums(voxel_sorted)
         )
 
+        # Find distance to each voxel from its' label's centroid (for intensity slope)
+        coords = voxel_sorted.loc[:, ['ID', *coord_cols]].groupby("ID")
+        pxl_distance = coords.transform(lambda x: abs(x - x.mean())).sum(axis=1)
+
         # Get intensities and calculate related variables
-        cols = voxel_data.columns.difference(['X', 'Y', 'Z'])
-        intensities = voxel_data.loc[:, cols].groupby("ID")
+        int_cols = voxel_sorted.columns.difference(coord_cols)
+        intensities = voxel_sorted.loc[:, int_cols].groupby("ID")
+
+        # Calculate following variables or each label on each image channel:
         output = output.join([
+            # Intensity minimum value
             intensities.min().rename(lambda x: x.replace("Mean", "Min"), axis=1),
+            # Intensity maximum value
             intensities.max().rename(lambda x: x.replace("Mean", "Max"), axis=1),
-            intensities.std().rename(lambda x: x.replace("Mean", "StdDev"), axis=1)])
+            # Intensity standard deviation
+            intensities.std().rename(lambda x: x.replace("Mean", "StdDev"), axis=1),
+            # slope of normalized label intensities as a function of distance from centroid
+            intensities.agg(lambda yax, xax=pxl_distance: __intensity_slope(yax, xax)
+                            ).rename(lambda x: x.replace("Mean", "Slope"), axis=1)])
         return output
 
     def get_label_names(self):
