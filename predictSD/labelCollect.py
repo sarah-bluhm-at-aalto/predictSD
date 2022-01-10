@@ -4,7 +4,7 @@ import os
 from glob import glob
 import subprocess
 from copy import deepcopy
-from typing import Union, Tuple, List
+from typing import Union, Tuple, List, Optional, Type
 from logging import NOTSET, disable, captureWarnings
 
 import numpy as np
@@ -15,7 +15,7 @@ from tifffile import TiffFile, imread
 from csbdeep.utils import normalize
 from csbdeep.utils.tf import limit_gpu_memory
 from csbdeep.io import save_tiff_imagej_compatible
-from stardist.models import StarDist3D
+from stardist.models import StarDist3D, StarDist2D
 from stardist.utils import gputools_available
 
 # function below searches for ImageJ exe-file (newest version). The paths can be changed.
@@ -140,6 +140,7 @@ class ImageData:
         self.label_paths = [] if paths_to_labels is None else paths_to_labels
         self.labels = None if paths_to_labels is None else ImageFile(paths_to_labels[0], is_label=True)
         self.voxel_dims = self.image.voxel_dims
+        self.is_2d = self.image.is_2d
         if self.labels is not None:
             self._test_img_shapes()
 
@@ -256,6 +257,7 @@ class ImageFile:
         self.name = self.path.stem
         self.img = self.path
         self.is_label = is_label
+        self.is_2d = False
         self.label_name = self.path
         self.shape = None
         self.channels = None
@@ -270,9 +272,9 @@ class ImageFile:
         return img
 
     @img.setter
-    def img(self, path: Union[str, pl.Path]):
+    def img(self, path: pl.Path):
         """Set path to image."""
-        self._img = pl.Path(path)
+        self._img = path
 
     @property
     def label_name(self) -> str:
@@ -319,12 +321,15 @@ class ImageFile:
 
     def _test_ax_order(self, axes: str):
         """Assert correct order of image axes."""
-        if axes not in ('ZCYX', 'ZYX', 'QYX'):
+        if axes in ('CYX', 'YX'):
+            self.is_2d = True
+        elif axes not in ('ZCYX', 'ZYX', 'QYX'):
             msg = f"Image axes order '{axes}' differs from the required 'Z(C)YX'."
             raise AxesOrderError(image_name=self.name, message=msg)
 
     def get_channels(self, channels: Union[int, Tuple[int]]) -> np.ndarray:
         """Get specific channels from a multichannel image."""
+        # TODO: Slicing based on dimensions
         if self.channels is not None and self.channels > 1:
             try:
                 return self.img[:, channels, :, :]
@@ -577,14 +582,14 @@ class OutputData:
         If length of label_paths and label_names does not match.
     """
 
-    def __init__(self, label_paths: List[str], label_names: List[str] = None) -> None:
+    def __init__(self, label_paths: List[Union[str, pl.Path]], label_names: Optional[List[str]] = None) -> None:
         self._label_files = [str(p) for p in label_paths]
         l_range = [f"Ch{v}" for v in range(len(label_paths))]
         self._label_names = l_range if label_names is None else label_names
         self._output = [None for _ in label_paths]
         assert len(self._label_names) == len(self._output) == len(label_paths)
 
-    def __setitem__(self, key: Union[int, str, pl.Path], data: Union[None, pd.DataFrame]) -> None:
+    def __setitem__(self, key: Union[int, str, pl.Path], data: Optional[pd.DataFrame]) -> None:
         if isinstance(key, str) or isinstance(key, pl.Path):
             key = self._label_files.index(str(pl.Path(key)))
         if data is None or isinstance(data, pd.DataFrame):
@@ -653,20 +658,22 @@ class PredictObjects:
 
     Attributes
     ----------
-    PredictObjects.default_config : dict
+    PredictObjects.model_instances : dict[str, Union[StarDist2D, StarDist3D]]
+        Contains model instances that have been generated.
+    PredictObjects.default_config : dict[]
         Contains default kwargs for handling StarDist prediction.
 
         Keywords
         --------
-        sd_models : Union[tuple, str]
+        sd_models : Tuple[str, ...]
             Model names to apply on images.
-        prediction_chs : Union[tuple, int]
+        prediction_chs : Tuple[int, ...]
             Channel indices for the models in sd_models in respective order.
         predict_big : bool
             Whether to split images into blocks for prediction. If True, use z_div, long_div and short_div.
-        nms_threshold : Union[None, float]
+        nms_threshold : Optional[float]
             If float, overrule default non-maximum suppression of the model(s).
-        probability_threshold : Union[None, float]
+        probability_threshold : Optional[float]
             If float, overrule default probability threshold of the model(s).
         z_div : int
             Image block division number on z-axis.
@@ -674,7 +681,7 @@ class PredictObjects:
             Image block division number on the larger axis from XY.
         short_div : int
             Image block division number on the shorter axis from XY.
-        memory_limit : Tuple[int, float]
+        memory_limit : Optional[Tuple[int, float]]
             Tuple of available GPU memory in Mb and fraction of memory to allocate for prediction.
         imagej_path : Union[str, pl.Path]
             String or pathlib.Path to ImageJ-executable for overlay plotting.
@@ -682,7 +689,7 @@ class PredictObjects:
         The name of the image-file.
     image : labelCollect.ImageFile
         ImageFile-object pointing to the image to segment.
-    label_paths : Union[None, List[str]]
+    label_paths : Optional[List[str, ...]]
         A path or list of paths to all label-files.
     config : dict
         Updated version of default_config for prediction with class instance.
@@ -695,7 +702,7 @@ class PredictObjects:
         Returns a tuple of tile numbers on each axis of image based on keys "z_div", "long_div", and "short_div" in
         PredictObjects.default_config or in kwargs.
     """
-
+    model_instances = {}
     default_config = {
         "sd_models": "DAPI10x",
         "prediction_chs": 1,
@@ -721,18 +728,9 @@ class PredictObjects:
         self.name = images.name
         self.image = images.image
         self.label_paths = images.label_paths
-        config = deepcopy(PredictObjects.default_config)
-        config.update({key: value for key, value in prediction_config.items()})
-        self.config = config
-        if self.config.get('memory_limit') is not None and gputools_available():
-            mem_limit = self.config.get('memory_limit')
-            limit_gpu_memory(mem_limit[1], allow_growth=False, total_memory=mem_limit[0])
-
-        # Create list of model/channel pairs to use
-        if isinstance(self.config.get("sd_models"), tuple) and isinstance(self.config.get("prediction_chs"), tuple):
-            self.model_list = [*zip(self.config.get("sd_models"), self.config.get("prediction_chs"))]
-        else:
-            self.model_list = [(self.config.get("sd_models"), self.config.get("prediction_chs"))]
+        self.model_list = None
+        self.config = None
+        self.__setup(prediction_config)
 
     def __call__(self, out_path: str, return_details: bool = True, overwrite: bool = True,
                  **kwargs) -> Union[None, dict]:
@@ -754,7 +752,6 @@ class PredictObjects:
             When return_details is True, returns dict that ontains information such as coordinates of the remaining
             StarDist label predictions, otherwise returns None.
         """
-
         out_details = dict()
         for model_and_ch in self.model_list:
             if not overwrite and self.test_label_existence(model_and_ch[0], out_path):
@@ -763,19 +760,58 @@ class PredictObjects:
             out_details[model_and_ch[0]] = (labels, details)
         if return_details:
             return out_details
-        return None
+
+    def __setup(self, prediction_config):
+        # Update default config with user input
+        config = deepcopy(PredictObjects.default_config)
+        config.update({key: value for key, value in prediction_config.items()})
+        self.config = config
+
+        # Limiting GPU-usage to avoid OoM
+        if self.config.get('memory_limit') is not None and gputools_available():
+            mem_limit = self.config.get('memory_limit')
+            limit_gpu_memory(mem_limit[1], allow_growth=False, total_memory=mem_limit[0])
+
+        #
+        # Create model instances and generate list of model/channel pairs to use
+        if isinstance(self.config.get("sd_models"), tuple) and isinstance(self.config.get("prediction_chs"), tuple):
+            self.model_list = [*zip(self.config.get("sd_models"), self.config.get("prediction_chs"))]
+        else:
+            self.model_list = [(self.config.get("sd_models"), self.config.get("prediction_chs"))]
+
+    @property
+    def model_list(self) -> List[Tuple[str, int]]:
+        """Get list of usable models and applicable image channels."""
+        return self._model_list
+
+    @model_list.setter
+    def model_list(self, model_input: Union[List[Tuple[str, int]], None]):
+        """Set models to be used and their respective image channels."""
+        if model_input is not None:
+            model_type = StarDist2D if self.image.is_2d else StarDist3D
+
+            # Reading of models if no earlier instances:
+            for (model_name, model_channel) in model_input:
+                if model_name not in PredictObjects.model_instances.keys():
+                    model = read_model(model_type, model_name)
+                    PredictObjects.model_instances[model_name] = model
+        self._model_list = model_input
 
     def _prediction(self, model, img, n_tiles, config):
         """Use model to predict image labels."""
         labels, details = model.predict_instances(img, axes="ZYX",
-            prob_thresh=config.get("probability_threshold"),
-            nms_thresh=config.get("nms_threshold"),
-            n_tiles=n_tiles
-        )
+                                                  prob_thresh=config.get("probability_threshold"),
+                                                  nms_thresh=config.get("nms_threshold"),
+                                                  n_tiles=n_tiles
+                                                  )
         return labels, details
 
-    def predict(self, model_and_ch_nro: tuple, out_path: str, make_overlay: bool = True,
-                n_tiles: tuple = None, overlay_path: str = None, **kwargs) -> Tuple[np.ndarray, dict]:
+    def use_model(self, model_name: str):
+        return PredictObjects.model_instances.get(model_name)
+
+    def predict(self, model_and_ch_nro: Tuple[str, int], out_path: str, make_overlay: bool = True,
+                n_tiles: Optional[Tuple[int, int, int]] = None, overlay_path: Optional[str] = None,
+                **kwargs) -> Tuple[np.ndarray, dict]:
         """Perform a prediction to one image.
         Parameters
         ----------
@@ -790,7 +826,7 @@ class PredictObjects:
             default_config or from kwargs.
         overlay_path : str
             Path where overlay image is saved to if created.
-        
+
         Returns
         -------
         labels : np.ndarray
@@ -798,23 +834,23 @@ class PredictObjects:
         details : dict
             Descriptions of label polygons/polyhedra.
         """
-
         config = deepcopy(self.config)
         config.update(kwargs)
-        
-        img = normalize(self.image.get_channels(model_and_ch_nro[1]), 1, 99.8, axis=(0, 1, 2))
-        print(f"\n{self.image.name}; Model = {model_and_ch_nro[0]} ; Image dims = {self.image.shape}")
+        (model_name, chan) = model_and_ch_nro
+
+        # TODO: Rework image axis handling to accept 2D
+        img = normalize(self.image.get_channels(chan), 1, 99.8, axis=(0, 1, 2))
+        print(f"\n{self.image.name}; Model = {model_name} ; Image dims = {self.image.shape}")
 
         # Define tile number if big image
         if config.get("predict_big") and n_tiles is None:
             n_tiles = self.define_tiles(img.shape)
 
         # Run prediction
-        model = read_model(model_and_ch_nro[0])
-        labels, details = self._prediction(model, img, n_tiles, config)
+        labels, details = self._prediction(self.use_model(model_name), img, n_tiles, config)
 
         # Define save paths:
-        file_stem = f'{self.name}_{model_and_ch_nro[0]}'
+        file_stem = f'{self.name}_{model_name}'
         save_label = pl.Path(out_path).joinpath(f'{file_stem}.labels.tif')
 
         # Save the label image:
@@ -830,7 +866,7 @@ class PredictObjects:
             ov_save_path = overlay_path if overlay_path is not None else out_path
             overlay_images(pl.Path(ov_save_path).joinpath(f'overlay_{file_stem}.tif'),
                            self.image.path, save_label, config.get("imagej_path"),
-                           channel_n=model_and_ch_nro[1])
+                           channel_n=chan)
         return labels, details
 
     def define_tiles(self, dims: Tuple[int, int, int]) -> Tuple[int, int, int]:
@@ -956,10 +992,11 @@ def create_output_dirs(out_path: Union[str, pl.Path], lbl_path: Union[str, pl.Pa
         lbl_path.mkdir(exist_ok=True, parents=True)
 
 
-def read_model(model_name: str) -> StarDist3D:
-    """Read StarDist model."""
+def read_model(model_func: Type[Union[StarDist3D, StarDist2D]], model_name: str,
+               model_path: str = str(pl.Path(__file__).parents[1].joinpath('models'))) -> Union[StarDist3D, StarDist2D]:
+    """Read 3D or 2D StarDist model."""
     with HidePrint():
-        return StarDist3D(None, name=model_name, basedir=str(pl.Path(__file__).parents[1].joinpath('models')))
+        return model_func(None, name=model_name, basedir=model_path)
 
 
 def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path, str],

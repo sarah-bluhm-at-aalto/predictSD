@@ -25,15 +25,19 @@ create image/label-overlays by calling predictSD/overlayLabels.ijm.
 **The simplest way to perform label prediction and data collection is to edit the variables on top of labelCollect.py
 and then run the file.** The script is designed to analyze all tiff-images found at an input path.
 
-Alternatively, you can import predictSD and create a new pipeline. In the snippet below, the prediction and collection
-is performed to a single image file:
+Alternatively, you can import predictSD and create a new pipeline (if predictSD can be found in system paths). In the
+snippet below, the prediction and collection is performed to a single image file:
 ```python
+# Add predictSD-master to system paths
+import sys
+sys.path.append("/path/to/predictSD-master/")                   # Replace path
+
 import predictSD as ps
 
 label_out = r"C:\testSet\labels"
 results_out = r"C:\testSet\results"
 
-image = ps.ImageData("C:\testSet\images\ctrl_2021-02-05_101657.tiff")
+image = ps.ImageData(r"C:\testSet\images\ctrl_2021-02-05_101657.tiff")
 config = {'return_details': False,
           'sd_models': ("GFP10x", "DAPI10x"),                   # Names of models to apply for the image
           'prediction_chs': (0, 1),                             # Respective channel indices to apply the models on
