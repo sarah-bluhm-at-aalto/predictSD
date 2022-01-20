@@ -1,5 +1,5 @@
 # predictSD
-**Prediction of cellular objects in 3D using StarDist<sup>(1,2)</sup> and collection of label information into a data
+**Prediction of cellular objects in 2D/3D using StarDist<sup>(1,2)</sup> and collection of label information into a data
 table.** The collected information includes object positions, maximal areas, volumes, and channel mean intensities. The
 data can automatically be saved in LAM-usable format, if so wanted. PredictSD can also be used to collect information
 on objects within TIFF-images from any segmentation source when provided together with the intensity images and if
@@ -42,13 +42,31 @@ config = {'return_details': False,
           'sd_models': ("GFP10x", "DAPI10x"),                   # Names of models to apply for the image
           'prediction_chs': (0, 1),                             # Respective channel indices to apply the models on
           'imagej_path': r"C:\Fiji.app\ImageJ-win64.exe"}       # Allows creation of flat image/label overlays
-
 predictor = ps.PredictObjects(image, **config)                  # Initiate prediction class
+```
+The given models are applied to the image by calling the predictor-instance (from above, predictor). As a result, a
+tiff-file with the labels is created to the output-path and its path is stroed to the ImageData-instance. The ImageData-
+instance can then be directly provided to CollectLabelData to collect information on the segmented objects. 
+```python
 predictor(out_path=label_out, overlay_path=results_out)         # Perform prediction for objects in image
 data = ps.CollectLabelData(image, convert_to_micron=True)       # Initiate class for collecting label information
-data(out_path=label_out, lam_compatible=True, save_data=True,   # Collect object intensities, area, volume, etc.
+data(out_path=results_out, lam_compatible=True, save_data=True, # Collect object intensities, area, volume, etc.
      filters=[('all', 'Area', 15.0, 'min')])                    # Filters can also be applied to the label information
 ```
+PredictObjects also accepts instances of StarDist2D- or StarDist3D-models instead of name-strings.
+```python
+from StarDist.models import StarDist2D
+
+config = {'prediction_chs': 0,
+          'sd_models':
+    StarDist2D.from_pretrained('2D_versatile_fluo')             # Load pretrained model instead of using a namestring
+          }
+image = ps.ImageData(r"C:\testSet2D\C2-210205_ctrlproj.tif")    # Load 2D image
+details = ps.PredictObjects(image, **config                     # Direct call for prediction, with details returned
+                            )(out_path=label_out,
+                              return_details=True) 
+```
+
 If labels already exist, the images must be named _samplename.tif(f)_ and _samplename(\_channelname).labels.tif(f)_,
 where text inside parentheses are optional. For example, if name of an image is 'ctrl_1146.tif' then labels could
 be named '_ctrl_1146.labels.tif_' or with additional channel's or used model's name, e.g. '_ctrl_1146_Ch=1.labels.tif_'
@@ -88,7 +106,7 @@ predictor = ps.PredictObjects(image, **config)
 
 ## Models
 
-The models-folder contains lab-made StarDist models for the detection of cells on varying stains and magnifictations.
+The models-folder contains lab-made StarDist3D models for the detection of cells on varying stains and magnifictations.
 Labelcollect.py expects used models to be found at a relative path of '../models/_model_name_', i.e. the folders must be
 arranged the same as in the repository.
 

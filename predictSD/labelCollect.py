@@ -4,8 +4,9 @@ import os
 from glob import glob
 import subprocess
 from copy import deepcopy
-from typing import Union, Tuple, List, Optional, Type
+from typing import Union, Tuple, List, Optional, Type, TypedDict
 from logging import NOTSET, disable, captureWarnings
+from warnings import warn
 
 import numpy as np
 import pandas as pd
@@ -63,7 +64,7 @@ prediction_configuration = {
     # the min or max allowed value. If the first item in tuple is 'all', filter is applied on all models.
     # E.g., "filters": [('all', 'Area', 15.0, 'min'), ('DAPI10x', 'Volume', 750.0, 'max')]
     #  -> filters all labels with Z-slice max area less than 15 and DAPI10x labels with volume > 750
-    "filters": [('all', 'Area', 10.0, 'min')],
+    "filters": [('all', 'Area', 5.0, 'min')],
 
     # PREDICTION VARIABLES ("None" for default values of training):
     # --------------------
@@ -97,6 +98,29 @@ prediction_configuration = {
     # Alternatively, give full path to run-file, e.g. r'C:\Programs\Fiji.app\ImageJ-win64.exe',
     ####################################
 }
+
+
+class PredictionConfig(TypedDict):
+    sd_models : Tuple[str, ...]
+        # Model names to apply on images.
+    prediction_chs : Tuple[int, ...]
+        # Channel indices for the models in sd_models in respective order.
+    predict_big : bool
+        # Whether to split images into blocks for prediction. If True, use z_div, long_div and short_div.
+    nms_threshold : Optional[float]
+        # If float, overrule default non-maximum suppression of the model(s).
+    probability_threshold : Optional[float]
+        # If float, overrule default probability threshold of the model(s).
+    z_div : int
+        # Image block division number on z-axis.
+    long_div : int
+        # Image block division number on the larger axis from XY.
+    short_div : int
+        # Image block division number on the shorter axis from XY.
+    memory_limit : Optional[Tuple[int, float]]
+        # Tuple of available GPU memory in Mb and fraction of memory to allocate for prediction.
+    imagej_path : Optional[Union[str, pl.Path]]
+        # String or pathlib.Path to ImageJ-executable for overlay plotting.
 
 
 class ImageData:
@@ -166,7 +190,7 @@ class ImageData:
             return
         if not self.labels.shape == tuple(map(self.image.shape.__getitem__, [0, -2, -1])):
             msg = f"Different image shapes. img: {self.image.shape}  ;  labels: {self.labels.shape}"
-            raise ShapeMismatchError(image_name=self.image.name, message=msg)
+            raise ShapeMismatchError(objname=self.image.name, message=msg)
 
     def labelled_voxels(self, item: Union[int, str, pl.Path] = None) -> Union[pd.DataFrame, None]:
         """Find labelled voxels from a label-file and return them in a DataFrame with intensities.
@@ -197,7 +221,9 @@ class ImageData:
             return None
 
         # Create DataFrame that contains named values of each voxel
-        column_data = {"ID": self.labels.img[notnull], "Z": notnull[0], "Y": notnull[1], "X": notnull[2]}
+        column_data = {"ID": self.labels.img[notnull]}
+        column_data.update({l: notnull[i] for i, l in enumerate(self.image.axes.replace('C', ''))})
+        #column_data = {"ID": self.labels.img[notnull], "Z": notnull[0], "Y": notnull[1], "X": notnull[2]}
         column_data.update(self._get_intensities(notnull))
         return pd.DataFrame(column_data)
 
@@ -261,6 +287,7 @@ class ImageFile:
         self.label_name = self.path
         self.shape = None
         self.channels = None
+        self.axes = None
         self.voxel_dims = force_dims
         self._define_attributes(self.path)
 
@@ -313,10 +340,10 @@ class ImageFile:
         """Transform image axis resolutions to voxel dimensions."""
         if None in (z_space, y_res, x_res):  # If some values are missing from metadata
             dims = [1. if z_space is None else z_space] + [1. if v is None else v[1]/v[0] for v in (y_res, x_res)]
-            print("INFO: Resolution on all axes not found in image metadata.")
-            print(f"-> Using default voxel size of 1 for missing axes; ZYX={tuple(dims)}")
+            warn("UserWarning: Resolution on all axes not found in image metadata.\n"+
+                 f"-> Using default voxel size of 1 for missing axes; ZYX={tuple(dims)}\n")
         else:
-            dims = [z_space] + [v[1]/v[0] for v in (y_res, x_res)]
+            dims = [None] + [v[1]/v[0] for v in (y_res, x_res)]
         self.voxel_dims = tuple(dims)
 
     def _test_ax_order(self, axes: str):
@@ -326,17 +353,24 @@ class ImageFile:
         elif axes not in ('ZCYX', 'ZYX', 'QYX'):
             msg = f"Image axes order '{axes}' differs from the required 'Z(C)YX'."
             raise AxesOrderError(image_name=self.name, message=msg)
+        self.axes = axes
 
     def get_channels(self, channels: Union[int, Tuple[int]]) -> np.ndarray:
         """Get specific channels from a multichannel image."""
-        # TODO: Slicing based on dimensions
         if self.channels is not None and self.channels > 1:
-            try:
-                return self.img[:, channels, :, :]
-            except IndexError:
-                print("Given index does not exist. Returning the last channel of image.")
-                return self.img[:, -1, :, :]
-        print("Image is not multi-channel.")
+            if self.is_2d is False:
+                try:
+                    return self.img[:, channels, :, :]
+                except IndexError:
+                    print("Given index does not exist. Returning the last channel of image.")
+                    return self.img[:, -1, :, :]
+            else:
+                try:
+                    return self.img[channels, :, :]
+                except IndexError:
+                    print("Given index does not exist. Returning the last channel of image.")
+                    return self.img[-1, :, :]
+        print("Image is single-channel.")
         return self.img
 
 
@@ -407,7 +441,7 @@ class CollectLabelData:
             List of tuples containing filters to apply. See CollectLabelData.filter().
         """
         if save_data and out_path is None:
-            print("INFO: CollectLabelData.__call__() requires path to output-folder (out_path: str, pl.Path).")
+            print("CollectLabelData.__call__() requires path to output-folder (out_path: str, pl.Path).")
             return
         # Collect data from each label file:
         print("\nCollecting label data.\n")
@@ -421,7 +455,7 @@ class CollectLabelData:
 
     def _get_area_maximums(self, voxel_data: pd.DataFrame) -> np.array:
         """Calculate maximal z-slice area of each object."""
-        grouped_voxels = voxel_data.groupby(["ID", "Z"])
+        grouped_voxels = voxel_data.groupby(["ID"]) if self.image_data.is_2d else voxel_data.groupby(["ID", "Z"])
         slices = grouped_voxels.size()
         return slices.groupby(level=0).apply(max) * np.prod(self.image_data.voxel_dims[1:])
 
@@ -482,11 +516,11 @@ class CollectLabelData:
         # Find coordinates and intensities of each labelled voxel
         voxel_data = self.image_data.labelled_voxels(item=label_file)
         if voxel_data is None:
-            print(f"WARNING: No labels found on {label_file}.")
+            warn(f"UserWarning: No labels found on {label_file}.")
             return None
-        if self.convert_coordinates:
-            cols = ("Z", "Y", "X")
-            voxel_data.loc[:, cols] = voxel_data.loc[:, cols].multiply(self.image_data.voxel_dims)
+        if self.convert_coordinates is True: # and any([vd != 1 for vd in self.image_data.voxel_dims]):
+            colmp = {k: m for (k, m) in zip("ZYX", self.image_data.voxel_dims) if k in voxel_data.columns}
+            voxel_data.loc[:, colmp.keys()] = voxel_data.loc[:, colmp.keys()].mul(pd.Series(colmp))
 
         # Collapse individual voxels into label-specific averages.
         output = voxel_data.groupby("ID").mean()
@@ -660,31 +694,8 @@ class PredictObjects:
     ----------
     PredictObjects.model_instances : dict[str, Union[StarDist2D, StarDist3D]]
         Contains model instances that have been generated.
-    PredictObjects.default_config : dict[]
+    PredictObjects.default_config : Union[dict, predictSD.PredictionConfig]
         Contains default kwargs for handling StarDist prediction.
-
-        Keywords
-        --------
-        sd_models : Tuple[str, ...]
-            Model names to apply on images.
-        prediction_chs : Tuple[int, ...]
-            Channel indices for the models in sd_models in respective order.
-        predict_big : bool
-            Whether to split images into blocks for prediction. If True, use z_div, long_div and short_div.
-        nms_threshold : Optional[float]
-            If float, overrule default non-maximum suppression of the model(s).
-        probability_threshold : Optional[float]
-            If float, overrule default probability threshold of the model(s).
-        z_div : int
-            Image block division number on z-axis.
-        long_div : int
-            Image block division number on the larger axis from XY.
-        short_div : int
-            Image block division number on the shorter axis from XY.
-        memory_limit : Optional[Tuple[int, float]]
-            Tuple of available GPU memory in Mb and fraction of memory to allocate for prediction.
-        imagej_path : Union[str, pl.Path]
-            String or pathlib.Path to ImageJ-executable for overlay plotting.
     name : str
         The name of the image-file.
     image : labelCollect.ImageFile
@@ -703,17 +714,9 @@ class PredictObjects:
         PredictObjects.default_config or in kwargs.
     """
     model_instances = {}
-    default_config = {
-        "sd_models": "DAPI10x",
-        "prediction_chs": 1,
-        "predict_big": False,
-        "nms_threshold": None,
-        "probability_threshold": None,
-        "z_div": 1,
-        "long_div": 2,
-        "short_div": 1,
-        "memory_limit": None,
-        "imagej_path": None
+    default_config: PredictionConfig = { "sd_models": "DAPI10x", "prediction_chs": 1, "predict_big": False,
+        "nms_threshold": None, "probability_threshold": None, "z_div": 1, "long_div": 2, "short_div": 1,
+        "memory_limit": None, "imagej_path": None
     }
 
     def __init__(self, images: ImageData, **prediction_config) -> None:
@@ -758,26 +761,35 @@ class PredictObjects:
                 continue
             labels, details = self.predict(model_and_ch_nro=model_and_ch, out_path=out_path, **kwargs)
             out_details[model_and_ch[0]] = (labels, details)
-        if return_details:
+        if (self.config.get('return_details') if 'return_details' in self.config.keys() else return_details):
             return out_details
 
     def __setup(self, prediction_config):
+        def test_mismatch(testv: bool):
+            if testv: return
+            raise ShapeMismatchError(objname=self.name,
+                                     message="Number of given models and image channels for prediction do not match. " +
+                                             "Values in config keys 'sd_models' and 'prediction_chs' must be pairable.")
+
+        sd_models = prediction_config.pop("sd_models")
         # Update default config with user input
         config = deepcopy(PredictObjects.default_config)
         config.update({key: value for key, value in prediction_config.items()})
         self.config = config
 
         # Limiting GPU-usage to avoid OoM
-        if self.config.get('memory_limit') is not None and gputools_available():
-            mem_limit = self.config.get('memory_limit')
-            limit_gpu_memory(mem_limit[1], allow_growth=False, total_memory=mem_limit[0])
+        if ((memlim := self.config.get('memory_limit')) is not None and gputools_available()):
+            limit_gpu_memory(memlim[1], allow_growth=False, total_memory=memlim[0])
 
-        #
         # Create model instances and generate list of model/channel pairs to use
-        if isinstance(self.config.get("sd_models"), tuple) and isinstance(self.config.get("prediction_chs"), tuple):
-            self.model_list = [*zip(self.config.get("sd_models"), self.config.get("prediction_chs"))]
+        chans = self.config.get("prediction_chs")
+        classes = [str, int, StarDist2D, StarDist3D]
+        test_mismatch((1 if any([isinstance(sd_models, v) for v in classes]) else len(sd_models)) ==
+                      (1 if any([isinstance(chans, v) for v in classes]) else len(chans)))
+        if isinstance(sd_models, tuple) and isinstance(chans, tuple):
+            self.model_list = [*zip(sd_models, chans)]
         else:
-            self.model_list = [(self.config.get("sd_models"), self.config.get("prediction_chs"))]
+            self.model_list = [(sd_models, chans)]
 
     @property
     def model_list(self) -> List[Tuple[str, int]]:
@@ -785,29 +797,42 @@ class PredictObjects:
         return self._model_list
 
     @model_list.setter
-    def model_list(self, model_input: Union[List[Tuple[str, int]], None]):
+    def model_list(self, model_input: Union[List[Tuple[Union[str, StarDist2D, StarDist3D], int]], None]):
         """Set models to be used and their respective image channels."""
         if model_input is not None:
             model_type = StarDist2D if self.image.is_2d else StarDist3D
 
             # Reading of models if no earlier instances:
-            for (model_name, model_channel) in model_input:
-                if model_name not in PredictObjects.model_instances.keys():
-                    model = read_model(model_type, model_name)
-                    PredictObjects.model_instances[model_name] = model
+            for ind, (model_name, model_channel) in enumerate(model_input):
+                if isinstance(model_name, StarDist2D) or isinstance(model_name, StarDist3D):
+                    model = model_name
+                    model.name = model.name.replace('_', '')
+                    model_input[ind] = (model.name, model_channel)
+                    if model.name not in PredictObjects.model_instances.keys():
+                        PredictObjects.model_instances[model.name] = model
+
+                elif isinstance(model_name, str):
+                    if model_name in ('2D_versatile_fluo', '2D_versatile_he'):
+                        if (stripped_name := model_name.replace('_', '')) not in PredictObjects.model_instances.keys():
+                            model = StarDist2D.from_pretrained(model_name)
+                            PredictObjects.model_instances[stripped_name] = model
+                        model_input[ind] = (stripped_name, model_channel)
+                    elif model_name not in PredictObjects.model_instances.keys():
+                        model = read_model(model_type, model_name)
+                        PredictObjects.model_instances[model_name] = model
         self._model_list = model_input
 
     def _prediction(self, model, img, n_tiles, config):
         """Use model to predict image labels."""
-        labels, details = model.predict_instances(img, axes="ZYX",
+        labels, details = model.predict_instances(img, axes=self.image.axes.replace('C', ''),
                                                   prob_thresh=config.get("probability_threshold"),
                                                   nms_thresh=config.get("nms_threshold"),
                                                   n_tiles=n_tiles
                                                   )
         return labels, details
 
-    def use_model(self, model_name: str):
-        return PredictObjects.model_instances.get(model_name)
+    def use_model(self, model_input: str):
+        return PredictObjects.model_instances.get(model_input)
 
     def predict(self, model_and_ch_nro: Tuple[str, int], out_path: str, make_overlay: bool = True,
                 n_tiles: Optional[Tuple[int, int, int]] = None, overlay_path: Optional[str] = None,
@@ -838,8 +863,10 @@ class PredictObjects:
         config.update(kwargs)
         (model_name, chan) = model_and_ch_nro
 
-        # TODO: Rework image axis handling to accept 2D
-        img = normalize(self.image.get_channels(chan), 1, 99.8, axis=(0, 1, 2))
+        if self.image.is_2d is True:
+            img = normalize(self.image.get_channels(chan), 1, 99.8, axis=(0, 1))
+        else:
+            img = normalize(self.image.get_channels(chan), 1, 99.8, axis=(0, 1, 2))
         print(f"\n{self.image.name}; Model = {model_name} ; Image dims = {self.image.shape}")
 
         # Define tile number if big image
@@ -854,9 +881,10 @@ class PredictObjects:
         save_label = pl.Path(out_path).joinpath(f'{file_stem}.labels.tif')
 
         # Save the label image:
-        save_tiff_imagej_compatible(save_label, labels.astype('int16'), axes='ZYX', **{"imagej": True,
-                                    "resolution": (1. / self.image.voxel_dims[1], 1. / self.image.voxel_dims[2]),
-                                    "metadata": {'spacing': self.image.voxel_dims[0]}})
+        save_tiff_imagej_compatible(save_label, labels.astype('int16'), axes=self.image.axes.replace('C', ''),
+                                    **{"imagej": True,
+                                       "resolution": (1. / self.image.voxel_dims[1], 1. / self.image.voxel_dims[2]),
+                                       "metadata": {'spacing': self.image.voxel_dims[0]}})
 
         # Add path to label paths
         if save_label not in self.label_paths:
@@ -921,10 +949,10 @@ class HideLog:
 
 
 class ShapeMismatchError(Exception):
-    """Exception raised when microscopy and label image have differing shapes."""
+    """Exception raised when size-restricted objects differing shapes."""
 
-    def __init__(self, image_name: str, message=f"Shape mismatch between images"):
-        self.name = image_name
+    def __init__(self, objname: str, message=f"Shape mismatch between images"):
+        self.name = objname
         self.message = message
         super().__init__(self.message)
 
@@ -961,8 +989,8 @@ def corresponding_imgs(file_name: str, target_path: str) -> list:
     try:
         return glob(f'{target_path}\\{file_name}*.tif') + glob(f'{target_path}\\{file_name}*.tiff')
     except IndexError:
-        print(f"ERROR: Could not find image with search string ' {file_name} '.")
-        print(" -> Assert that image files are named sample_name.labels.tif and sample_name.tif")
+        warn(f"UserWarning: Could not find image with search string ' {file_name} '.\n"+
+             "-> Assert that image files are named sample_name.labels.tif and sample_name.tif")
 
 
 def _get_tag(tif: TiffFile, tag: str) -> Union[None, str, int, float, tuple]:
@@ -995,8 +1023,8 @@ def create_output_dirs(out_path: Union[str, pl.Path], lbl_path: Union[str, pl.Pa
 def read_model(model_func: Type[Union[StarDist3D, StarDist2D]], model_name: str,
                model_path: str = str(pl.Path(__file__).parents[1].joinpath('models'))) -> Union[StarDist3D, StarDist2D]:
     """Read 3D or 2D StarDist model."""
-    with HidePrint():
-        return model_func(None, name=model_name, basedir=model_path)
+    # with HidePrint():
+    return model_func(None, name=model_name, basedir=model_path)
 
 
 def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path, str],
@@ -1023,7 +1051,7 @@ def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path,
     try:
         subprocess.run(fiji_cmd, shell=True, check=True, capture_output=True, stdin=subprocess.PIPE)
     except subprocess.CalledProcessError as err:
-        print("\nWARNING: Error during subprocess - overlayLabels.ijm!\n")
+        warn(f"UserWarning: Error during subprocess - overlayLabels.ijm!\n{err.output}")
         print(err.output)
 
 
@@ -1055,14 +1083,14 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
         Whether labels already exist in lbl_path. If True, the function only collects label information from the files,
         otherwise StarDist prediction is performed before the collection.
     """
-
+    dim_warning = dict()
     # Create output directories
     create_output_dirs(out_path, lbl_path)
 
     # Find all tif or tiff files in the directory
     files = sorted(glob(f'{img_path}\\*.tif') + glob(f'{img_path}\\*.tiff'))
     if not files:
-        print(f"ERROR: No image files found at path {img_path}")
+        warn(f"UserWarning: No image files found at path {img_path}")
 
     # Perform the analysis on the images in alphabetical order:
     for image_file in files:
@@ -1076,6 +1104,7 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
 
         try:  # Assign image/label object, read metadata
             images = ImageData(image_file, paths_to_labels=label_files, voxel_dims=voxel_dims)
+            dim_warning.update({images.name: all([v==1 for v in images.voxel_dims])})
         except ShapeMismatchError:
             continue
 
@@ -1092,6 +1121,9 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
         # Print description of collected data
         for data in label_data.output:
             print(f"Model:  {data[0]}\nFile:  {data[1]}\n{data[2].describe()}\n")
+    if to_microns and any((imgw := dim_warning.values())) and not all(imgw):
+        warn(f"UserWarning: {sum(imgw)}/{len(dim_warning.keys())} images have missing dimension info."+""
+             " Recommendation to either 1) set micron conversion to False, or 2) forcing the correct micron lengths.")
 
 
 if __name__ == "__main__":
