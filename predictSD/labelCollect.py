@@ -101,21 +101,21 @@ prediction_configuration = {
 
 
 class PredictionConfig(TypedDict):
-    sd_models : Tuple[str, ...]
+    sd_models : Optional[Tuple[str, ...]]
         # Model names to apply on images.
-    prediction_chs : Tuple[int, ...]
+    prediction_chs : Optional[Tuple[int, ...]]
         # Channel indices for the models in sd_models in respective order.
-    predict_big : bool
+    predict_big : Optional[bool]
         # Whether to split images into blocks for prediction. If True, use z_div, long_div and short_div.
     nms_threshold : Optional[float]
         # If float, overrule default non-maximum suppression of the model(s).
     probability_threshold : Optional[float]
         # If float, overrule default probability threshold of the model(s).
-    z_div : int
+    z_div : Optional[int]
         # Image block division number on z-axis.
-    long_div : int
+    long_div : Optional[int]
         # Image block division number on the larger axis from XY.
-    short_div : int
+    short_div : Optional[int]
         # Image block division number on the shorter axis from XY.
     memory_limit : Optional[Tuple[int, float]]
         # Tuple of available GPU memory in Mb and fraction of memory to allocate for prediction.
@@ -188,7 +188,8 @@ class ImageData:
         if self.labels is None:
             print("Label data has not been defined.")
             return
-        if not self.labels.shape == tuple(map(self.image.shape.__getitem__, [0, -2, -1])):
+        axes = [-2, -1] if self.is_2d else [0, -2, -1]
+        if not self.labels.shape == tuple(map(self.image.shape.__getitem__, axes)):
             msg = f"Different image shapes. img: {self.image.shape}  ;  labels: {self.labels.shape}"
             raise ShapeMismatchError(objname=self.image.name, message=msg)
 
@@ -227,10 +228,14 @@ class ImageData:
         column_data.update(self._get_intensities(notnull))
         return pd.DataFrame(column_data)
 
-    def select(self, item: Union[int, str, pl.Path]) -> None:
+    def select(self, item: Union[int, str, pl.Path]) -> IndexError:
         """Make one of the inputted label files active."""
         if isinstance(item, int):
             item = self.label_paths[item]
+        elif isinstance(item, str):
+            item = self.label_paths[[str(p) for p in self.label_paths].index(item)]
+        if not item.exists():
+            raise FileNotFoundError
         self.labels = ImageFile(item, is_label=True)
 
 
@@ -295,7 +300,7 @@ class ImageFile:
     def img(self) -> np.ndarray:
         """Read image."""
         with HideLog():
-            img = imread(self._img)
+            img = imread(str(self._img))
         return img
 
     @img.setter
@@ -429,8 +434,9 @@ class CollectLabelData:
         assert len(self.label_files) == len(names)
         self.output = OutputData(self.label_files, names)
 
-    def __call__(self, save_data: bool = False, out_path: Union[str, pl.Path] = None, filters: list = None, **kwargs):
-        """Read all label files and save label-specific information.
+    def __call__(self, save_data: bool = False, out_path: Union[str, pl.Path] = None, filters: list = None, *args,
+                 **kwargs):
+        """Read all label image-files and save label-specific information.
         Parameters
         ----------
         save_data : bool
@@ -441,17 +447,16 @@ class CollectLabelData:
             List of tuples containing filters to apply. See CollectLabelData.filter().
         """
         if save_data and out_path is None:
-            print("CollectLabelData.__call__() requires path to output-folder (out_path: str, pl.Path).")
+            print("CollectLabelData.__call__() requires path to output-folder (out_path: str, pathlib.Path).")
             return
         # Collect data from each label file:
-        print("\nCollecting label data.\n")
         for ind, label_file in enumerate(self.label_files):
             self.read_labels(label_file=label_file)
         if filters is not None:
             self.filter(filters)
         if save_data:
             for ind in range(len(self.label_files)):
-                self.save(out_path, item=ind, **kwargs)
+                self.save(out_path, item=ind, *args, **kwargs)
 
     def _get_area_maximums(self, voxel_data: pd.DataFrame) -> np.array:
         """Calculate maximal z-slice area of each object."""
@@ -537,6 +542,7 @@ class CollectLabelData:
         output = output.join([
             intensities.min().rename(lambda x: x.replace("Mean", "Min"), axis=1),
             intensities.max().rename(lambda x: x.replace("Mean", "Max"), axis=1),
+            intensities.median().rename(lambda x: x.replace("Mean", "Median"), axis=1),
             intensities.std().rename(lambda x: x.replace("Mean", "StdDev"), axis=1)])
         return output
 
@@ -558,7 +564,8 @@ class CollectLabelData:
                 self.output[ind] = self.gather_data(file_path)
 
     def save(self, out_path: Union[str, pl.Path], item: Union[int, str, pl.Path, pd.DataFrame] = 0,
-             label_name: str = None, lam_compatible: bool = True, decimal_precision: Union[int, bool] = 4) -> None:
+             label_name: str = None, lam_compatible: bool = True, decimal_precision: Union[int, bool] = 4,
+             *args) -> None:
         """Save gathered label information from one label file as DataFrame.
 
         Parameters
@@ -596,8 +603,9 @@ class CollectLabelData:
         else:
             file = f"{self.image_data.name}_{label_name}.csv"
             save_path = out_path.joinpath(file)
+            data = data.rename(columns=lambda x: x.replace(' ', ''))
         if decimal_precision is not False:
-            data = data.round(decimals=4 if isinstance(decimal_precision, bool) else decimal_precision)
+            data = data.round(decimals=(4 if decimal_precision is True else decimal_precision))
         # Create output-directory and save:
         out_path.mkdir(exist_ok=True)
         data.to_csv(save_path)
@@ -672,7 +680,7 @@ class OutputData:
             elif filter_type == 'max':
                 filtered_output = output_data.loc[output_data.loc[:, column] <= value, :]
             else:
-                print("Filter failed - Type must be either 'min' or 'max'.")
+                warn("Filter failed - Type must be either 'min' or 'max'.")
                 return
             self._output[index] = filtered_output
         except IndexError:
@@ -714,7 +722,7 @@ class PredictObjects:
         PredictObjects.default_config or in kwargs.
     """
     model_instances = {}
-    default_config: PredictionConfig = { "sd_models": "DAPI10x", "prediction_chs": 1, "predict_big": False,
+    default_config: PredictionConfig = { "sd_models": None, "prediction_chs": 0, "predict_big": False,
         "nms_threshold": None, "probability_threshold": None, "z_div": 1, "long_div": 2, "short_div": 1,
         "memory_limit": None, "imagej_path": None
     }
@@ -755,13 +763,15 @@ class PredictObjects:
             When return_details is True, returns dict that ontains information such as coordinates of the remaining
             StarDist label predictions, otherwise returns None.
         """
-        out_details = dict()
+        if (dout := (self.config.get('return_details') if 'return_details' in self.config.keys() else return_details)):
+            out_details = dict()
         for model_and_ch in self.model_list:
             if not overwrite and self.test_label_existence(model_and_ch[0], out_path):
                 continue
             labels, details = self.predict(model_and_ch_nro=model_and_ch, out_path=out_path, **kwargs)
-            out_details[model_and_ch[0]] = (labels, details)
-        if (self.config.get('return_details') if 'return_details' in self.config.keys() else return_details):
+            if dout and 'out_details' in locals():
+                out_details[model_and_ch[0]] = (labels, details)
+        if dout:
             return out_details
 
     def __setup(self, prediction_config):
@@ -774,7 +784,7 @@ class PredictObjects:
         sd_models = prediction_config.pop("sd_models")
         # Update default config with user input
         config = deepcopy(PredictObjects.default_config)
-        config.update({key: value for key, value in prediction_config.items()})
+        config.update(prediction_config)
         self.config = config
 
         # Limiting GPU-usage to avoid OoM
@@ -782,7 +792,7 @@ class PredictObjects:
             limit_gpu_memory(memlim[1], allow_growth=False, total_memory=memlim[0])
 
         # Create model instances and generate list of model/channel pairs to use
-        chans = self.config.get("prediction_chs")
+        chans = self.config.get('prediction_chs')
         classes = [str, int, StarDist2D, StarDist3D]
         test_mismatch((1 if any([isinstance(sd_models, v) for v in classes]) else len(sd_models)) ==
                       (1 if any([isinstance(chans, v) for v in classes]) else len(chans)))
@@ -790,6 +800,7 @@ class PredictObjects:
             self.model_list = [*zip(sd_models, chans)]
         else:
             self.model_list = [(sd_models, chans)]
+        self.config['sd_models'], self.config['prediction_chs'] = zip(*self.model_list)
 
     @property
     def model_list(self) -> List[Tuple[str, int]]:
@@ -987,7 +998,8 @@ class AxesOrderError(Exception):
 def corresponding_imgs(file_name: str, target_path: str) -> list:
     """Find corresponding images based on name of the other."""
     try:
-        return glob(f'{target_path}\\{file_name}*.tif') + glob(f'{target_path}\\{file_name}*.tiff')
+        files = glob(f'{target_path}\\{file_name}*.tif') + glob(f'{target_path}\\{file_name}*.tiff')
+        return [pl.Path(f) for f in files]
     except IndexError:
         warn(f"UserWarning: Could not find image with search string ' {file_name} '.\n"+
              "-> Assert that image files are named sample_name.labels.tif and sample_name.tif")
@@ -1114,6 +1126,7 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
             _ = predictor(out_path=lbl_path, overlay_path=out_path, return_details=True)
 
         # Get information on label objects
+        print("\nCollecting label data.\n")
         label_data = CollectLabelData(images, convert_to_micron=to_microns)
         label_data(out_path=out_path, lam_compatible=create_lam_output, filters=prediction_conf.get('filters'),
                    save_data=True)
