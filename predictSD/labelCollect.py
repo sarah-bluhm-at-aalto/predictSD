@@ -21,6 +21,8 @@ from stardist.utils import gputools_available, fill_label_holes
 # from tensorflow.keras.utils import Sequence
 # import tensorflow as tf
 
+# TODO add instructions on using '2D_versatile_fluo', '2D_versatile_he'
+
 # function below searches for ImageJ exe-file (newest version). The paths can be changed.
 try:
     ij_path = pl.Path(glob(r"C:\hyapp\fiji-win64*")[-1]).joinpath(r"Fiji.app\ImageJ-win64.exe")
@@ -381,7 +383,7 @@ class ImageFile:
             warn("UserWarning: Resolution on all axes not found in image metadata.\n"+
                  f"-> Using default voxel size of 1 for missing axes; ZYX={tuple(dims)}\n")
         else:
-            dims = [None] + [v[1]/v[0] for v in (y_res, x_res)]
+            dims = [z_space] + [v[1]/v[0] for v in (y_res, x_res)]
         self.voxel_dims = tuple(dims)
 
     def _test_ax_order(self, axes: str):
@@ -500,6 +502,8 @@ class CollectLabelData:
     def _get_volumes(self, voxel_data: pd.DataFrame) -> pd.Series:
         """Calculate object volume based on voxel dimensions."""
         grouped_voxels = voxel_data.groupby("ID")
+        if self.image_data.is_2d:
+            return grouped_voxels.size() * np.nan
         return grouped_voxels.size() * np.prod(self.image_data.voxel_dims)
 
     def filter(self, filter_list: list) -> None:
@@ -556,8 +560,9 @@ class CollectLabelData:
         if voxel_data is None:
             warn(f"UserWarning: No labels found on {label_file}.")
             return None
+
+        colmp = {k: m for (k, m) in zip("ZYX", self.image_data.voxel_dims) if k in voxel_data.columns}
         if self.convert_coordinates is True: # and any([vd != 1 for vd in self.image_data.voxel_dims]):
-            colmp = {k: m for (k, m) in zip("ZYX", self.image_data.voxel_dims) if k in voxel_data.columns}
             voxel_data.loc[:, colmp.keys()] = voxel_data.loc[:, colmp.keys()].mul(pd.Series(colmp))
 
         # Collapse individual voxels into label-specific averages.
@@ -565,7 +570,7 @@ class CollectLabelData:
 
         # Calculate other variables of interest
         output = output.assign(
-            Volume      = self._get_volumes(voxel_data),
+            Volume      = self._get_volumes(voxel_data.loc[:, ['ID'] + list(colmp.keys())]),
             Area        = self._get_area_maximums(voxel_data)
         )
 
@@ -796,7 +801,8 @@ class PredictObjects:
             When return_details is True, returns dict that ontains information such as coordinates of the remaining
             StarDist label predictions, otherwise returns None.
         """
-        if (dout := (self.config.get('return_details') if 'return_details' in self.config.keys() else return_details)):
+        dout = self.config.get('return_details') if 'return_details' in self.config.keys() else return_details
+        if dout:
             out_details = dict()
         for model_and_ch in self.model_list:
             if not overwrite and self.test_label_existence(model_and_ch[0], out_path):
@@ -821,7 +827,8 @@ class PredictObjects:
         self.config = config
 
         # Limiting GPU-usage to avoid OoM
-        if ((memlim := self.config.get('memory_limit')) is not None and gputools_available()):
+        memlim = self.config.get('memory_limit')
+        if memlim is not None and gputools_available():
             limit_gpu_memory(memlim[1], allow_growth=False, total_memory=memlim[0])
 
         # Create model instances and generate list of model/channel pairs to use
@@ -857,7 +864,8 @@ class PredictObjects:
 
                 elif isinstance(model_name, str):
                     if model_name in ('2D_versatile_fluo', '2D_versatile_he'):
-                        if (stripped_name := model_name.replace('_', '')) not in PredictObjects.model_instances.keys():
+                        stripped_name = model_name.replace('_', '')
+                        if stripped_name not in PredictObjects.model_instances.keys():
                             model = StarDist2D.from_pretrained(model_name)
                             PredictObjects.model_instances[stripped_name] = model
                         model_input[ind] = (stripped_name, model_channel)
@@ -1172,7 +1180,8 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
         # Print description of collected data
         for data in label_data.output:
             print(f"Model:  {data[0]}\nFile:  {data[1]}\n{data[2].describe()}\n")
-    if to_microns and any((imgw := dim_warning.values())) and not all(imgw):
+    imgw = dim_warning.values()
+    if to_microns and any(imgw) and not all(imgw):
         warn(f"UserWarning: {sum(imgw)}/{len(dim_warning.keys())} images have missing dimension info."+""
              " Recommendation to either 1) set micron conversion to False, or 2) forcing the correct micron lengths.")
 
