@@ -1,8 +1,8 @@
 # predictSD
 **Prediction of cellular objects in 2D/3D using StarDist<sup>(1,2)</sup> and collection of label information into a data
-table.** The collected information includes object positions, maximal areas, volumes, and also means, SDs,  channel intensities. The
-data can automatically be saved in LAM-usable format, if so wanted. PredictSD can also be used to collect information
-on objects within TIFF-images from any segmentation source when provided together with the intensity images and if
+table.** The collected information includes object positions, maximal areas, volumes, and multiple intensity variables.
+The data can automatically be saved in LAM-usable format, if so wanted. PredictSD can also be used to collect
+information on objects within TIFF-images from any segmentation source when provided together with the intensity images and if
 each label in the segmentation images is marked by a single, unique value.
 
 ### Installation
@@ -19,7 +19,13 @@ contain multiple channels, and a separate prediction model can be applied to eac
 
 LabelCollect.py outputs tiff-images of the predicted labels and saves label information to either LAM-runnable
 folders/files or dumps them in a single output folder. If given a path to a Fiji/ImageJ<sup>(3)</sup> executable, the 
-prediction can create image/label-overlays by calling predictSD/overlayLabels.ijm.
+prediction can create z-projected 2D overlays of the image/label pairs by calling predictSD/overlayLabels.ijm.
+
+The result tables include the following columns: <samp>'ID', 'Z', 'Y', 'X', 'Volume', 'Area', 'IntensityMean', 
+'IntensityMin', 'IntensityMax', 'IntensityMedian', and 'IntensityStdDev'</samp>. The intensity values are calculated for
+**all** channels in the image and have their column names appended with suffix <samp>'_Ch='</samp> plus the channel's 
+index.
+
 ------------------------
 ## Usage
 **The simplest way to perform label prediction and data collection is to edit the variables on top of labelCollect.py
@@ -87,7 +93,7 @@ Out[2]: DAPI10x C:\testSet\labels\ctrl_2021_101657_DAPI10x.labels.tif
 
 `PredictObjects` also accepts instances of `StarDist2D` or `StarDist3D` models instead of bare name-strings.
 ```python
-from StarDist.models import StarDist2D                          # Stardist models are also imported through predictSD
+from stardist.models import StarDist2D                          # Stardist models are also imported through predictSD
 
 config = {'prediction_chs': 0,
           'sd_models':
@@ -142,31 +148,29 @@ predictor = ps.PredictObjects(image, **config)
 ## Models
 
 The models-folder contains lab-made StarDist3D models for the detection of cells on varying stains and magnifictations.
-Labelcollect.py expects used models to be found at a relative path of '../models/_model_name_', i.e. the folders must be
-arranged the same as in the repository.
+Self-created models can also be used with Labelcollect.py, either by placing the files in a folder
+<samp>"predictSD-master/models/<model_name>"</samp>, or by passing the initialised model to `PredictObjects`.
 
-#### DAPI10x
-Dmel midgut DAPI-stained nuclei. Trained with voxel ZYX-dimensions of (8.20 um, 0.650 um, 0.650 um). Imaged with Aurox
-Clarity.
+| Model | Description | ZYX, &#181;m |
+| --- | --- | --- |
+| DAPI10x | Dmel adult midgut DAPI-stained nuclei. Aurox Clarity. | 8.20, 0.650, 0.650 |
+| DAPI20x | Dmel adult midgut DAPI-stained nuclei. Aurox Clarity. | 3.40, 0.325, 0.325 |
+| GFP10x | Dmel adult midgut ISC/EB-specific esg<sup>ts</sup> driver. Aurox Clarity. | 8.20, 0.650, 0.650 |
+| GFP20x | Dmel adult midgut ISC/EB-specific esg<sup>ts</sup> driver. Aurox Clarity. | 3.40, 0.325, 0.325 |
+| fatBody | 5d larvae fat body cell DAPI. Leica SP8 upright 20x.<sup>[A]</sup>| 1.040, 0.445, 0.445 |
 
-#### DAPI20x
-Dmel midgut DAPI-stained nuclei. Trained with voxel ZYX-dimensions of (3.40 um, 0.325 um, 0.325 um). Imaged with Aurox
-Clarity.
+A. _The model was trained with images showing a phenotype where a sub-population of cells had smaller nuclei. 
+Consequently, the model may not be ideal for normal fat body._
 
-#### fatBody
-Dmel day 5 larvae fat body cell DAPI staining. Trained with voxel ZYX-dimensions of (1.0404597 um, 0.4456326 um,
-0.4456326 um). Imaged with Leica SP8 upright, 20x. The model was trained with images from control group and experimental
-group which showed a phenotype with smaller nuclei.
+**NOTE**: It is recommended to adjust the probability- and NMS-thresholds for your specific use-case to get the best
+results. This can be accomplished by:
+1. Editing <samp>thresholds.json</samp> in the model's folder (applied whenever model is used, unless overridden by 2. 
+or 3.)
+3. Modifying <samp>prediction_configuration</samp> keywords <samp>"probability_threshold"</samp> & <samp>"nms_threshold"
+</samp> in  labelCollect.py (applied when labelCollect.py is executed)
+4. Including the above keywords to `PredictObjects` config (applied by the instance) 
 
-#### GFP10x
-Dmel midgut ISC/EB-specific esg<sup>ts</sup> driver. Trained with voxel ZYX-dimensions of (8.20 um, 0.650 um, 0.650 um).
-Imaged with Aurox Clarity.
-
-#### GFP20x
-Dmel midgut ISC/EB-specific esg<sup>ts</sup> driver. Trained with voxel ZYX-dimensions of (3.40 um, 0.325 um, 0.325 um).
-Imaged with Aurox Clarity.
-
-
+------------------------
 ## dropHeaders.py
 Used to drop extra header rows from csv-files exported from Imaris. The files are expected to be in LAM-hierarchical
 sample-folders. LAM expects all input data to have an exact index for column names, and removal of the headers is
@@ -202,7 +206,7 @@ Arto I. Viitanen - [Hietakangas laboratory](https://www.helsinki.fi/en/researchg
 Jaakko Mattila&emsp;- &emsp; [Mattila laboratory](https://www.helsinki.fi/en/researchgroups/metabolism-and-signaling/)  
 Jack Morikka &emsp; - &emsp; <s>
 [Mattila laboratory](https://www.helsinki.fi/en/researchgroups/metabolism-and-signaling/)
-</s>&emsp; (-2021)
+</s>&emsp; ( < 2021 )
 
 ------------------------
 ### References

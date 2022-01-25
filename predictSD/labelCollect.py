@@ -17,7 +17,9 @@ from csbdeep.utils import normalize
 from csbdeep.utils.tf import limit_gpu_memory
 from csbdeep.io import save_tiff_imagej_compatible
 from stardist.models import StarDist3D, StarDist2D
-from stardist.utils import gputools_available
+from stardist.utils import gputools_available, fill_label_holes
+# from tensorflow.keras.utils import Sequence
+# import tensorflow as tf
 
 # function below searches for ImageJ exe-file (newest version). The paths can be changed.
 try:
@@ -121,6 +123,37 @@ class PredictionConfig(TypedDict):
         # Tuple of available GPU memory in Mb and fraction of memory to allocate for prediction.
     imagej_path : Optional[Union[str, pl.Path]]
         # String or pathlib.Path to ImageJ-executable for overlay plotting.
+    fill_holes : bool
+        # If True, PredictObjects fills holes in obtained labels.
+
+# # @tf.function
+# def pfunc(model, iseq):
+#     for ind, item in enumerate(iseq):
+#         model.predict(item[ind])
+#
+#
+# class ImageSequence(Sequence):
+#     def __init__(self, filenames, name, key='image', type='train'):
+#         super().__init__()
+#         #self._imagedata = (ImageFile(f) for f in filenames)
+#         #self._filenames = [i.name for i in self._imagedata]
+#         self._filenames = filenames
+#         self._key = key
+#         self._name = name
+#         print('{} {}-{} dataset created'.format(name, type, key))
+#
+#     def __len__(self):
+#         return len(self._filenames)
+#
+#     # "@lru_cache(100)
+#     def __getitem__(self, index):
+#         # x = tifffile.imread(self._filenames[index])
+#         x = imread(self._filenames[index])
+#         if self._key == 'image':
+#             x = normalize(x, 1, 99.8, axis=(0, 1, 2))
+#         # elif self._key == 'mask':
+#         #      x = fill_label_holes(x)
+#         return x
 
 
 class ImageData:
@@ -724,7 +757,7 @@ class PredictObjects:
     model_instances = {}
     default_config: PredictionConfig = { "sd_models": None, "prediction_chs": 0, "predict_big": False,
         "nms_threshold": None, "probability_threshold": None, "z_div": 1, "long_div": 2, "short_div": 1,
-        "memory_limit": None, "imagej_path": None
+        "memory_limit": None, "imagej_path": None, "fill_holes": True
     }
 
     def __init__(self, images: ImageData, **prediction_config) -> None:
@@ -829,7 +862,8 @@ class PredictObjects:
                             PredictObjects.model_instances[stripped_name] = model
                         model_input[ind] = (stripped_name, model_channel)
                     elif model_name not in PredictObjects.model_instances.keys():
-                        model = read_model(model_type, model_name)
+                        with HidePrint():
+                            model = read_model(model_type, model_name)
                         PredictObjects.model_instances[model_name] = model
         self._model_list = model_input
 
@@ -886,6 +920,10 @@ class PredictObjects:
 
         # Run prediction
         labels, details = self._prediction(self.use_model(model_name), img, n_tiles, config)
+
+        # Fill holes in labels
+        if config.get("fill_holes") is True:
+            labels = fill_label_holes(labels)
 
         # Define save paths:
         file_stem = f'{self.name}_{model_name}'
