@@ -22,9 +22,11 @@ folders/files or dumps them in a single output folder. If given a path to a Fiji
 prediction can create z-projected 2D overlays of the image/label pairs by calling predictSD/overlayLabels.ijm.
 
 The result tables include the following columns: <samp>'ID', 'Z', 'Y', 'X', 'Volume', 'Area', 'IntensityMean', 
-'IntensityMin', 'IntensityMax', 'IntensityMedian', and 'IntensityStdDev'</samp>. The intensity values are calculated for
-**all** channels in the image and have their column names appended with suffix <samp>'_Ch='</samp> plus the channel's 
-index.
+'IntensityMin', 'IntensityMax', 'IntensityMedian', 'IntensityStdDev',</samp> and <samp>'IntensitySlope'</samp>. The 
+<samp>'IntensitySlope'</samp> represents the object's pixel-wise intensity distribution as a function of distance from 
+centroid, where negative and positive values indicate a central and outward intensity localisation, respectively. 
+All intensity values are calculated for **all** channels in the image and have their column names appended with suffix 
+<samp>'_Ch='</samp> plus the channel's index.
 
 ------------------------
 ## Usage
@@ -91,7 +93,10 @@ ID                          ...
 Out[2]: DAPI10x C:\testSet\labels\ctrl_2021_101657_DAPI10x.labels.tif
 ```
 
-`PredictObjects` also accepts instances of `StarDist2D` or `StarDist3D` models instead of bare name-strings.
+`PredictObjects` also accepts instances of `StarDist2D` or `StarDist3D` models instead of bare name-strings. 
+Additionally, similar to predictSD-models, the 2D pre-trained models of StarDist, i.e., the provided fluorescent and H&E 
+stained models can be used with only their names: <samp>'2D_versatile_fluo'</samp> and <samp>'2D_versatile_he'</samp>, 
+respectively.
 ```python
 from stardist.models import StarDist2D                          # Stardist models are also imported through predictSD
 
@@ -104,11 +109,13 @@ details = ps.PredictObjects(image, **config                     # Direct call fo
                             )(out_path=label_out,
                               return_details=True) 
 ```
+
+
 If labels already exist, the images must be named <samp>"samplename.tif(f)"</samp> and
 <samp>"samplename(_channelname).labels.tif(f)"</samp>, where text inside parentheses are optional. For example, if name
 of an image is <samp>"ctrl_1146.tif"</samp> then labels could be named <samp>"ctrl_1146.labels.tif"</samp> or with
 additional channel's or used model's name, e.g. <samp>"ctrl_1146_Ch=1.labels.tif"</samp> or 
-<samp>ctrl_1146_DAPI10x.labels.tif</samp>, respectively.
+<samp>"ctrl_1146_DAPI10x.labels.tif"</samp>, respectively.
 
 Information from existing labels could be collected with:
 ```python

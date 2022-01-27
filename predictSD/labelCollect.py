@@ -4,7 +4,7 @@ import os
 from glob import glob
 import subprocess
 from copy import deepcopy
-from typing import Union, Tuple, List, Optional, Type, TypedDict
+from typing import Union, Tuple, List, Optional, Type #, TypedDict
 from logging import NOTSET, disable, captureWarnings
 from warnings import warn
 
@@ -19,9 +19,7 @@ from csbdeep.io import save_tiff_imagej_compatible
 from stardist.models import StarDist3D, StarDist2D
 from stardist.utils import gputools_available, fill_label_holes
 # from tensorflow.keras.utils import Sequence
-# import tensorflow as tf
-
-# TODO add instructions on using '2D_versatile_fluo', '2D_versatile_he'
+import tensorflow as tf
 
 # function below searches for ImageJ exe-file (newest version). The paths can be changed.
 try:
@@ -55,6 +53,7 @@ force_voxel_size = None  # 10x=(8.2000000, 0.6500002, 0.6500002); 20x=(3.4, 0.32
 prediction_configuration = {
     # GIVE MODEL TO USE:
     # Give model names in tuple, e.g. "sd_models": ("DAPI10x", "GFP10x")
+    # Pre-trained 2D StarDist models can be used with '2D_versatile_fluo' (DAPI) and '2D_versatile_he' (H&E)
     "sd_models": ("GFP10x", "DAPI10x"),
 
     # Channel position of the channel to predict. Set to None if images have only one channel. Indexing from zero.
@@ -77,7 +76,7 @@ prediction_configuration = {
     # [0-1 ; None] Non-maximum suppression, see: https://towardsdatascience.com/non-maximum-suppression-nms-93ce178e177c
     "nms_threshold": None,
     # [0-1 ; None] Probability threshold, decrease if too few objects found, increase if  too many
-    "probability_threshold": None,
+    "probability_threshold": 0.2,
     # ----------------------------------------------------------------
 
     # MEMORY:
@@ -104,7 +103,7 @@ prediction_configuration = {
 }
 
 
-class PredictionConfig(TypedDict):
+class PredictionConfig: #(TypedDict):
     sd_models : Optional[Tuple[str, ...]]
         # Model names to apply on images.
     prediction_chs : Optional[Tuple[int, ...]]
@@ -555,6 +554,16 @@ class CollectLabelData:
             DataFrame with voxel values of each label collapsed into wide-format observations, i.e. each row represents
             one object.
         """
+        def __intensity_slope(yaxis, xaxis):
+            # rescale to [0,1]
+            yx = (yaxis - np.min(yaxis)) / np.ptp(yaxis)
+            xaxis = xaxis.iloc(axis=0)[yx.index.min():yx.index.max() + 1]
+            xx = (xaxis - np.min(xaxis)) / np.ptp(xaxis)
+            try:
+                return np.polyfit(xx, yx, deg=1)[0]
+            except np.linalg.LinAlgError:
+                return np.nan
+
         # Find coordinates and intensities of each labelled voxel
         voxel_data = self.image_data.labelled_voxels(item=label_file)
         if voxel_data is None:
@@ -565,8 +574,10 @@ class CollectLabelData:
         if self.convert_coordinates is True: # and any([vd != 1 for vd in self.image_data.voxel_dims]):
             voxel_data.loc[:, colmp.keys()] = voxel_data.loc[:, colmp.keys()].mul(pd.Series(colmp))
 
+        voxel_sorted = voxel_data.sort_values(by='ID').reset_index(drop=True)
+
         # Collapse individual voxels into label-specific averages.
-        output = voxel_data.groupby("ID").mean()
+        output = voxel_sorted.groupby("ID").mean()
 
         # Calculate other variables of interest
         output = output.assign(
@@ -574,14 +585,25 @@ class CollectLabelData:
             Area        = self._get_area_maximums(voxel_data)
         )
 
-        # Get intensities and calculate related variables
-        cols = voxel_data.columns.difference(['X', 'Y', 'Z'])
-        intensities = voxel_data.loc[:, cols].groupby("ID")
+        # Find distance to each voxel from its' label's centroid (for intensity slope)
+        coords = voxel_sorted.loc[:, ['ID', *colmp.keys()]].groupby("ID")
+        pxl_distance = coords.transform(lambda x: abs(x - x.mean())).sum(axis=1)
+
+        # Get intensities and calculate related variables for all image channels
+        intensities = voxel_sorted.loc[:, voxel_sorted.columns.difference(['X', 'Y', 'Z'])].groupby("ID")
         output = output.join([
+            # Intensity minimum value
             intensities.min().rename(lambda x: x.replace("Mean", "Min"), axis=1),
+            # Intensity maximum value
             intensities.max().rename(lambda x: x.replace("Mean", "Max"), axis=1),
+            # Intensity median
             intensities.median().rename(lambda x: x.replace("Mean", "Median"), axis=1),
-            intensities.std().rename(lambda x: x.replace("Mean", "StdDev"), axis=1)])
+            # Intensity standard deviation
+            intensities.std().rename(lambda x: x.replace("Mean", "StdDev"), axis=1),
+            # slope of normalized label intensities as a function of distance from centroid
+            intensities.agg(lambda yax, xax=pxl_distance: __intensity_slope(yax, xax)
+                            ).rename(lambda x: x.replace("Mean", "Slope"), axis=1)]
+        )
         return output
 
     def get_label_names(self):
@@ -877,11 +899,13 @@ class PredictObjects:
 
     def _prediction(self, model, img, n_tiles, config):
         """Use model to predict image labels."""
-        labels, details = model.predict_instances(img, axes=self.image.axes.replace('C', ''),
-                                                  prob_thresh=config.get("probability_threshold"),
-                                                  nms_thresh=config.get("nms_threshold"),
-                                                  n_tiles=n_tiles
-                                                  )
+        # TODO handle retracing issue
+        with HideLog():
+            labels, details = model.predict_instances(img, axes=self.image.axes.replace('C', ''),
+                                                      prob_thresh=config.get("probability_threshold"),
+                                                      nms_thresh=config.get("nms_threshold"),
+                                                      n_tiles=n_tiles
+                                                      )
         return labels, details
 
     def use_model(self, model_input: str):
@@ -920,7 +944,12 @@ class PredictObjects:
             img = normalize(self.image.get_channels(chan), 1, 99.8, axis=(0, 1))
         else:
             img = normalize(self.image.get_channels(chan), 1, 99.8, axis=(0, 1, 2))
-        print(f"\n{self.image.name}; Model = {model_name} ; Image dims = {self.image.shape}")
+        probt, nmst = config.get('probability_threshold'), config.get('nms_threshold')
+        print(f"\n{self.image.name}; Model = {model_name} ; Image dims = {self.image.shape}" # ; Thresholds:" +
+              # TODO account for tresholds from either model or from user input
+              # f"{str(probt) if probt is None else round(probt, 3)} probability, " +
+              # f"{str(nmst) if nmst is None else round(nmst, 3)} NMS)"
+              )
 
         # Define tile number if big image
         if config.get("predict_big") and n_tiles is None:
@@ -1093,6 +1122,7 @@ def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path,
 
     # Find path to predictSD's ImageJ macro for the overlay image creation:
     file_dir = pl.Path(__file__).parent.absolute()
+    # TODO refactor overlayLabels.ijm to allow 2D images
     macro_file = file_dir.joinpath("overlayLabels.ijm")
 
     # Test that required files exist:
