@@ -67,7 +67,7 @@ prediction_configuration = {
     # the min or max allowed value. If the first item in tuple is 'all', filter is applied on all models.
     # E.g., "filters": [('all', 'Area', 15.0, 'min'), ('DAPI10x', 'Volume', 750.0, 'max')]
     #  -> filters all labels with Z-slice max area less than 15 and DAPI10x labels with volume > 750
-    "filters": [('all', 'Area', 5.0, 'min')],
+    "filters": [('all', 'Area', 5.0, 'min')], #, ('DAPI10x', 'Intensity Mean_Ch=1', 150, 'min')],
 
     # PREDICTION VARIABLES ("None" for default values of training):
     # --------------------
