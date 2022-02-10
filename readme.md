@@ -5,12 +5,15 @@ The data can automatically be saved in LAM-usable format, if so wanted. PredictS
 information on objects within TIFF-images from any segmentation source when provided together with the intensity images and if
 each label in the segmentation images is marked by a single, unique value.
 
-### Installation
+### Installation  
 PredictSD requires an environment that is capable of running StarDist. For additional information, see
 [StarDist's GitHub-page](https://github.com/stardist/stardist/). Required packages are listed in
 'docs/requirements.txt'. For installation on Win10 using CUDA 11.4, see 'docs/environment_setup.txt'.
+
 ------------------------
-## labelCollect.py
+
+## labelCollect.py  
+
 The whole process is handled through labelCollect.py, which contains information on use (open file in text editor). The
 only input required (sans the settings) are tiff-images with axes order of '(Z)(C)YX', i.e. ImageJ-format. The images can
 contain multiple channels, and a separate prediction model can be applied to each one of them.
@@ -24,12 +27,14 @@ prediction can create z-projected 2D overlays of the image/label pairs by callin
 The result tables include the following columns: <samp>'ID', 'Z', 'Y', 'X', 'Volume', 'Area', 'IntensityMean', 
 'IntensityMin', 'IntensityMax', 'IntensityMedian', 'IntensityStdDev',</samp> and <samp>'IntensitySlope'</samp>. The 
 <samp>'IntensitySlope'</samp> represents the object's pixel-wise intensity distribution as a function of distance from 
-centroid, where negative and positive values indicate a central and outward intensity localisation, respectively. 
-All intensity values are calculated for **all** channels in the image and have their column names appended with suffix 
-<samp>'_Ch='</samp> plus the channel's index.
+centroid, where negative and positive values indicate a central and outward intensity localisation, respectively. The 
+slope calculation is a work-in-progress and will likely experience future changes. All intensity values are calculated 
+for **all** channels in the image and have their column names appended with suffix <samp>'_Ch='</samp> plus the 
+channel's index.
 
 ------------------------
-## Usage
+
+## Usage  
 **The simplest way to perform label prediction and data collection is to edit the variables on top of labelCollect.py
 and then run the file.** The script is designed to analyze all tiff-images found at an input path.
 
@@ -46,7 +51,7 @@ import predictSD as ps
 label_out = r"C:\testSet\labels"
 res_out = r"C:\testSet\results"
 
-image = ps.ImageData(r"C:\testSet\ctrl_2021_101657.tiff")
+image = ps.ImageData(r"C:\testSet\ctrl_2021_101657.tif")
 config = {'return_details': False,
           'sd_models': ("GFP10x", "DAPI10x"),                   # Names of models to apply for the image
           'prediction_chs': (0, 1),                             # Respective channel indices to apply the models on
