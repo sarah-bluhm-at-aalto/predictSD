@@ -1,9 +1,31 @@
+- [predictSD](#predictsd)
+    + [Installation](#installation)
+  * [labelCollect.py](#labelcollectpy)
+    + [Output](#output)
+  * [Usage](#usage)
+    + [Memory Management](#memory-management)
+  * [Models](#models)
+  * [Additional info](#additional-info)
+    + [Intensity slope](#intensity-slope)
+    + [dropHeaders.py](#dropheaderspy)
+  * [Citation](#citation)
+    + [LAM - Linear Analysis of Midgut](#lam---linear-analysis-of-midgut)
+  * [License](#license)
+  * [Authors](#authors)
+  * [Acknowledgements](#acknowledgements)
+  * [References](#references)
+
+<small><i><a href='http://ecotrust-canada.github.io/markdown-toc/'>Table of contents generated with markdown-toc</a></i></small>
+
+
 # predictSD
 **Prediction of cellular objects in 2D/3D using StarDist<sup>(1,2)</sup> and collection of label information into a data
 table.** The collected information includes object positions, maximal areas, volumes, and multiple intensity variables.
 The data can automatically be saved in LAM-usable format, if so wanted. PredictSD can also be used to collect
 information on objects within TIFF-images from any segmentation source when provided together with the intensity images and if
 each label in the segmentation images is marked by a single, unique value.
+
+
 
 ### Installation  
 PredictSD requires an environment that is capable of running StarDist. For additional information, see
@@ -27,8 +49,8 @@ prediction can create z-projected 2D overlays of the image/label pairs by callin
 The result tables include the following columns: <samp>'ID', 'Z', 'Y', 'X', 'Volume', 'Area', 'IntensityMean', 
 'IntensityMin', 'IntensityMax', 'IntensityMedian', 'IntensityStdDev',</samp> and <samp>'IntensitySlope'</samp>. The 
 <samp>'IntensitySlope'</samp> represents the object's pixel-wise intensity distribution as a function of distance from 
-centroid, where negative and positive values indicate a central and outward intensity localisation, respectively. The 
-slope calculation is a work-in-progress and will likely experience future changes. All intensity values are calculated 
+centroid, where negative and positive values indicate a central and outward intensity localisation, respectively. See 
+segment [Additional info](#Additional info) for more about the slope calculation. All intensity values are calculated 
 for **all** channels in the image and have their column names appended with suffix <samp>'_Ch='</samp> plus the 
 channel's index.
 
@@ -115,7 +137,6 @@ details = ps.PredictObjects(image, **config                     # Direct call fo
                               return_details=True) 
 ```
 
-
 If labels already exist, the images must be named <samp>"samplename.tif(f)"</samp> and
 <samp>"samplename(_channelname).labels.tif(f)"</samp>, where text inside parentheses are optional. For example, if name
 of an image is <samp>"ctrl_1146.tif"</samp> then labels could be named <samp>"ctrl_1146.labels.tif"</samp> or with
@@ -171,8 +192,8 @@ Self-created models can also be used with Labelcollect.py, either by placing the
 | GFP20x | Dmel adult midgut ISC/EB-specific esg<sup>ts</sup> driver. Aurox Clarity. | 3.40, 0.325, 0.325 |
 | fatBody | 5d larvae fat body cell DAPI. Leica SP8 upright 20x.<sup>[A]</sup>| 1.040, 0.445, 0.445 |
 
-A. _The model was trained with images showing a phenotype where a sub-population of cells had smaller nuclei. 
-Consequently, the model may not be ideal for normal fat body._
+&emsp;A. _The model was trained with images showing a phenotype where a sub-population of cells had smaller  
+&emsp;nuclei. Consequently, the model may not be ideal for normal fat body._
 
 **NOTE**: It is recommended to adjust the probability- and NMS-thresholds for your specific use-case to get the best
 results. This can be accomplished by:
@@ -183,14 +204,28 @@ or 3.)
 4. Including the above keywords to `PredictObjects` config (applied by the instance) 
 
 ------------------------
-## dropHeaders.py
+
+## Additional info
+
+### Intensity slope
+**The slope calculation is a work-in-progress, lacking validation, and will most likely experience future changes.** The
+intensity slope estimates the localisation of intensities within each segmented object (label) on all existing channels
+of the image. Its value is the slope of a line fitted to pixel-wise, normalised [0,1] centroid distances and intensities
+(see figure). The slope of each label is calculated separately for each image channel, which are then appended to 
+result table in unique columns. 
+
+![Intensity Slope](img/islope.png)  
+&emsp;_**Figure 1.** Mock data of a label with two image channels with variable  
+&emsp;intensities and the resulting intensity slopes._
+
+### dropHeaders.py
 Used to drop extra header rows from csv-files exported from Imaris. The files are expected to be in LAM-hierarchical
 sample-folders. LAM expects all input data to have an exact index for column names, and removal of the headers is
 required when combining data from Imaris with data from labelCollect.py.
 
 ------------------------
 ## Citation
-If used in research, please cite the LAM-journal article below.
+If used for research, please cite the LAM-journal article below.
 > Arto Viitanen, Josef Gullmets, Jack Morikka, Pekka Katajisto, Jaakko Mattila, Ville Hietakangas, An image analysis 
 > method for regionally defined cellular phenotyping of the Drosophila midgut, Cell Reports Methods, Volume 1, Issue 5, 
 > 2021, 100059, ISSN 2667-2375, https://doi.org/10.1016/j.crmeth.2021.100059.
@@ -205,15 +240,15 @@ Image analysis method for regionally defined organ-wide cellular phenotyping of 
 3. [Tutorial videos](https://www.youtube.com/playlist?list=PLjv-8Gzxh3AynUtI3HaahU2oddMbDpgtx)
 
 ------------------------
-### License
+## License
 This project is licensed under the GPL-3.0 License  - see the LICENSE.md file for details
 
 ------------------------
-### Authors
+## Authors
 Arto I. Viitanen - [Hietakangas laboratory](https://www.helsinki.fi/en/researchgroups/nutrient-sensing)
 
 
-### Acknowledgements  
+## Acknowledgements  
 
 Jaakko Mattila&emsp;- &emsp; [Mattila laboratory](https://www.helsinki.fi/en/researchgroups/metabolism-and-signaling/)  
 Jack Morikka &emsp; - &emsp; <s>
@@ -221,7 +256,7 @@ Jack Morikka &emsp; - &emsp; <s>
 </s>&emsp; ( < 2021 )
 
 ------------------------
-### References
+## References
 
 1. Uwe Schmidt, Martin Weigert, Coleman Broaddus, and Gene Myers. Cell Detection with Star-convex Polygons.
     International Conference on Medical Image Computing and Computer-Assisted Intervention (MICCAI), Granada, Spain,
