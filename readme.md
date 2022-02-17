@@ -22,8 +22,8 @@
 **Prediction of cellular objects in 2D/3D using StarDist<sup>(1,2)</sup> and collection of label information into a data
 table.** The collected information includes object positions, maximal areas, volumes, and multiple intensity variables.
 The data can automatically be saved in LAM-usable format, if so wanted. PredictSD can also be used to collect
-information on objects within TIFF-images from any segmentation source when provided together with the intensity images and if
-each label in the segmentation images is marked by a single, unique value.
+information on objects within TIFF-images from any segmentation source when provided together with the intensity images 
+and if each label in the segmentation images is marked by a single, unique value.
 
 
 
