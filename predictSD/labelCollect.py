@@ -1,3 +1,10 @@
+r"""
+@version: 0.1
+@author: Arto I. Viitanen
+
+Distributed under GNU General Public License v3.0
+"""
+
 from __future__ import print_function, unicode_literals, absolute_import, division
 
 import os
@@ -785,7 +792,7 @@ class PredictObjects:
         PredictObjects.default_config or in kwargs.
     """
     model_instances = {}
-    default_config: PredictionConfig = { "sd_models": None, "prediction_chs": 0, "predict_big": False,
+    default_config = { "sd_models": None, "prediction_chs": 0, "predict_big": False,
         "nms_threshold": None, "probability_threshold": None, "z_div": 1, "long_div": 2, "short_div": 1,
         "memory_limit": None, "imagej_path": None, "fill_holes": True
     }
@@ -1121,7 +1128,7 @@ def read_model(model_func: Type[Union[StarDist3D, StarDist2D]], model_name: str,
     except ValueError as err:
         if str(err).startswith("grid = ("):
             raise ShapeMismatchError(objname=model_name, message="Dimensions of model and image differ.")
-        raise
+        else: raise
     else:
         return model
 
@@ -1134,7 +1141,6 @@ def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path,
 
     # Find path to predictSD's ImageJ macro for the overlay image creation:
     file_dir = pl.Path(__file__).parent.absolute()
-    # TODO refactor overlayLabels.ijm to allow 2D images
     macro_file = file_dir.joinpath("overlayLabels.ijm")
 
     # Test that required files exist:
@@ -1148,11 +1154,10 @@ def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path,
     # Parse run command and arguments:
     input_args = ";;".join([str(save_path), str(path_to_image), str(path_to_label), str(channel_n)])
     fiji_cmd = " ".join([str(imagej_path), "--headless", "-macro", str(macro_file), input_args])
-    try:
-        subprocess.run(fiji_cmd, shell=True, check=True, capture_output=True, stdin=subprocess.PIPE)
-    except subprocess.CalledProcessError as err:
-        warn(f"UserWarning: Error during subprocess - overlayLabels.ijm!\n{err.output}")
-        print(err.output)
+    print("Creating overlay")
+    po = subprocess.run(fiji_cmd, shell=True, check=True, capture_output=True, stdin=subprocess.PIPE)
+    if po.stderr:
+        warn(f"Overlay {po.stderr}")
 
 
 def get_tiff_dtype(numpy_dtype: str) -> int:
