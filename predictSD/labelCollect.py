@@ -569,8 +569,9 @@ class CollectLabelData:
             yx = (yaxis - np.min(yaxis)) / np.ptp(yaxis)
             xaxis = xaxis.iloc(axis=0)[yx.index.min():yx.index.max() + 1]
             xx = (xaxis - np.min(xaxis)) / np.ptp(xaxis)
+            inds = np.invert(np.isnan([xx, yx]).any(axis=0))
             try:
-                return np.polyfit(xx, yx, deg=1)[0]
+                return np.polyfit(xx[inds], yx[inds], deg=1)[0]
             except np.linalg.LinAlgError:
                 return np.nan
 
@@ -597,7 +598,7 @@ class CollectLabelData:
 
         # Find distance to each voxel from its' label's centroid (for intensity slope)
         coords = voxel_sorted.loc[:, ['ID', *colmp.keys()]].groupby("ID")
-        pxl_distance = coords.transform(lambda x: abs(x - x.mean())).sum(axis=1)
+        pxl_distance = np.sqrt(coords.transform(lambda x: (x - x.mean())**2).sum(axis=1))
 
         # Get intensities and calculate related variables for all image channels
         intensities = voxel_sorted.loc[:, voxel_sorted.columns.difference(['X', 'Y', 'Z'])].groupby("ID")
@@ -797,7 +798,7 @@ class PredictObjects:
         "memory_limit": None, "imagej_path": None, "fill_holes": True
     }
 
-    def __init__(self, images: ImageData, **prediction_config) -> None:
+    def __init__(self, images: ImageData, mdir: Union[str, pl.Path]=None,  **prediction_config) -> None:
         """
         Parameters
         ----------
@@ -805,10 +806,13 @@ class PredictObjects:
             ImageData-object that contains data regarding one microscopy image that will be used for prediction
         prediction_config : dict
             Is used to update PredictObjects.default_config to change prediction settings.
+        mdir : str, pathlib.Path
+            Path to the model directory.
         """
         self.name = images.name
         self.image = images.image
         self.label_paths = images.label_paths
+        self.model_path = pl.Path(__file__).parent.joinpath("../models").resolve() if mdir is None else pl.Path(mdir)
         self.model_list = None
         self.config = None
         self.__setup(prediction_config)
@@ -902,7 +906,7 @@ class PredictObjects:
                     elif model_name not in PredictObjects.model_instances.keys():
                         model_type = StarDist2D if self.image.is_2d else StarDist3D
                         with HidePrint():
-                            model = read_model(model_type, model_name)
+                            model = read_model(model_type, model_name, str(self.model_path))
                         PredictObjects.model_instances[model_name] = model
         self._model_list = model_input
 
@@ -1119,8 +1123,8 @@ def create_output_dirs(out_path: Union[str, pl.Path], lbl_path: Union[str, pl.Pa
         lbl_path.mkdir(exist_ok=True, parents=True)
 
 
-def read_model(model_func: Type[Union[StarDist3D, StarDist2D]], model_name: str,
-               model_path: str = str(pl.Path(__file__).parents[1].joinpath('models'))) -> Union[StarDist3D, StarDist2D]:
+def read_model(model_func: Type[Union[StarDist3D, StarDist2D]], model_name: str, model_path: str) -> Union[StarDist3D,
+                                                                                                           StarDist2D]:
     """Read 3D or 2D StarDist model."""
     # with HidePrint():
     try:
