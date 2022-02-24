@@ -565,13 +565,16 @@ class CollectLabelData:
             one object.
         """
         def __intensity_slope(yaxis, xaxis):
+            # TODO: fix slope calculation, multichannel fails (if NaN present?)
             # rescale to [0,1]
             yx = (yaxis - np.min(yaxis)) / np.ptp(yaxis)
             xaxis = xaxis.iloc(axis=0)[yx.index.min():yx.index.max() + 1]
             xx = (xaxis - np.min(xaxis)) / np.ptp(xaxis)
-            inds = np.invert(np.isnan([xx, yx]).any(axis=0))
+            # inds = np.invert(xx.isna().add(yx.isna()))
             try:
-                return np.polyfit(xx[inds], yx[inds], deg=1)[0]
+                # out = np.polyfit(xx.loc[inds,:], yx.loc[inds,:], deg=1)[0]
+                out = np.polynomial.polynomial.Polynomial.fit(xx, yx, deg=1)
+                return out.coef[0]
             except np.linalg.LinAlgError:
                 return np.nan
 
@@ -1144,8 +1147,7 @@ def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path,
     pl.Path(save_path).parent.mkdir(exist_ok=True)
 
     # Find path to predictSD's ImageJ macro for the overlay image creation:
-    file_dir = pl.Path(__file__).parent.absolute()
-    macro_file = file_dir.joinpath("overlayLabels.ijm")
+    macro_file = pl.Path(__file__).parent.joinpath("overlayLabels.ijm").resolve()
 
     # Test that required files exist:
     if not pl.Path(imagej_path).exists():
