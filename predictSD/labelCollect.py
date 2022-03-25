@@ -962,7 +962,7 @@ class PredictObjects:
             img = normalize(self.image.get_channels(chan), 1, 99.8, axis=(0, 1, 2))
         probt, nmst = config.get('probability_threshold'), config.get('nms_threshold')
         print(f"\n{self.image.name}; Model = {model_name} ; Image dims = {self.image.shape}" # ; Thresholds:" +
-              # TODO account for printing tresholds from either model or from user input
+              # TODO: account for printing tresholds from either model or from user input
               # f"{str(probt) if probt is None else round(probt, 3)} probability, " +
               # f"{str(nmst) if nmst is None else round(nmst, 3)} NMS)"
               )
@@ -986,6 +986,7 @@ class PredictObjects:
         save_label = pl.Path(out_path).joinpath(f'{file_stem}.labels.tif')
 
         # Save the label image:
+        # TODO: Copy label type from intensity image
         save_tiff_imagej_compatible(str(save_label), labels.astype('int16'), axes=self.image.axes.replace('C', ''),
                                     **{"imagej": True,
                                        "resolution": (1. / self.image.voxel_dims[1], 1. / self.image.voxel_dims[2]),
