@@ -26,7 +26,8 @@ Stack.setDisplayMode("color");
 Stack.setChannel(1);
 run("Grays");
 Stack.setChannel(2);
-run("glasbey_inverted");
+//run("glasbey_inverted");
+run("16 Colors");
 Stack.setDisplayMode("composite");
 
 save(argList[0]);

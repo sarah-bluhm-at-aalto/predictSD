@@ -1,5 +1,5 @@
 r"""
-@version: 0.1
+@version: 0.1.1
 @author: Arto I. Viitanen
 
 Distributed under GNU General Public License v3.0
@@ -268,7 +268,6 @@ class ImageData:
         # Create DataFrame that contains named values of each voxel
         column_data = {"ID": self.labels.img[notnull]}
         column_data.update({l: notnull[i] for i, l in enumerate(self.image.axes.replace('C', ''))})
-        #column_data = {"ID": self.labels.img[notnull], "Z": notnull[0], "Y": notnull[1], "X": notnull[2]}
         column_data.update(self._get_intensities(notnull))
         return pd.DataFrame(column_data)
 
@@ -798,7 +797,7 @@ class PredictObjects:
         "memory_limit": None, "imagej_path": None, "fill_holes": True
     }
 
-    def __init__(self, images: ImageData, mdir: Union[str, pl.Path]=None,  **prediction_config) -> None:
+    def __init__(self, images: ImageData, mdir: Union[str, pl.Path] = None,  **prediction_config) -> None:
         """
         Parameters
         ----------
@@ -838,8 +837,7 @@ class PredictObjects:
             StarDist label predictions, otherwise returns None.
         """
         dout = self.config.get('return_details') if 'return_details' in self.config.keys() else return_details
-        if dout:
-            out_details = dict()
+        out_details = dict()
         for model_and_ch in self.model_list:
             if not overwrite and self.test_label_existence(model_and_ch[0], out_path):
                 continue
