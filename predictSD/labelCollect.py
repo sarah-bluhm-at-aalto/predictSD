@@ -37,9 +37,9 @@ except IndexError:
 # INPUT/OUTPUT PATHS
 # ------------------
 PREDICTSD_VARS = {
-    'image_path': r'C:\testSet\images',
-    'label_path': r'C:\testSet\images\masks',
-    'output_path': r'C:\testSet\images\results',
+    'image_path': '/home/artoviit/Work/CtBP_CtBP_Y_GA-1_10X/images',
+    'label_path': '/home/artoviit/Work/CtBP_CtBP_Y_GA-1_10X/masks',
+    'output_path': '/home/artoviit/Work/CtBP_CtBP_Y_GA-1_10X/results',
 
 # Whether to save label data in LAM-compatible format and folder hierarchy
 # This expects that the images are named in a compatible manner, i.e. "samplegroup_samplename.tif"
@@ -70,7 +70,7 @@ PREDICTSD_CONFIG = {
     # If multiple channels, the numbers must be given in same order as sd_models, e.g. ("DAPI10x", "GFP10x") with (1, 0)
     # NOTE that the channel positions remain the same even if split to separate images with ImageJ!
     #  -> Array indexing however is changed for Python; either use input images with a single channel or all of them
-    "prediction_chs": (0, 1),      # (1, 0)
+    "prediction_chs": (0, 2),      # (1, 0)
 
     # List of filters to apply to predicted labels. Each tuple must contain 1) index of data or name/model, 2) name of
     # column where filter is applied, 3) filtering value, and 4) 'min' or 'max' to indicate if filtering value is
@@ -107,7 +107,7 @@ PREDICTSD_CONFIG = {
     # ----------------------------------------------------------------
 
     # Set to None if image/label -overlay images are not required.
-    "imagej_path": ij_path
+    "imagej_path": '/home/artoviit/Programs/ImageJ/ImageJ'
     # Alternatively, give full path to run-file, e.g. r'C:\Programs\Fiji.app\ImageJ-win64.exe',
     ####################################
 }
@@ -1155,11 +1155,12 @@ def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path,
 
     # Parse run command and arguments:
     input_args = ";;".join([str(save_path), str(path_to_image), str(path_to_label), str(channel_n)])
-    fiji_cmd = " ".join([str(imagej_path), "--headless", "-macro", str(macro_file), input_args])
+    fiji_cmd = " ".join([str(imagej_path), "--headless", "-macro", str(macro_file), f'"{input_args}"'])
     print("Creating overlay")
-    po = subprocess.run(fiji_cmd, shell=True, check=True, capture_output=True, stdin=subprocess.PIPE)
-    if po.stderr:
-        warn(f"Overlay {po.stderr}")
+    try:
+        po = subprocess.run(fiji_cmd, shell=True, check=True, capture_output=True, stdin=subprocess.PIPE)
+    except subprocess.CalledProcessError as e:
+        warn(e.stderr)
 
 
 def get_tiff_dtype(numpy_dtype: str) -> int:

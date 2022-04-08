@@ -32,4 +32,4 @@ Stack.setDisplayMode("composite");
 
 save(argList[0]);
 run("Close All");
-run("Quit");
+//run("Quit");
