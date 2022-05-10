@@ -42,22 +42,22 @@ PREDICTSD_VARS = {
     'label_path': '/home/exp/masks',
     'output_path': '/home/exp/results',
 
-# Whether to save label data in LAM-compatible format and folder hierarchy
-# This expects that the images are named in a compatible manner, i.e. "samplegroup_samplename.tif"
+    # Whether to save label data in LAM-compatible format and folder hierarchy
+    # This expects that the images are named in a compatible manner, i.e. "samplegroup_samplename.tif"
     'create_lam_output': True,
 
-# Whether to transform coordinates to real length, i.e. index position * voxel size. If False, all output coordinates
-# are simply based on pixel positions [0, 1, 2 .. N] where N is the total number of pixels on any given axis.
+    # Whether to transform coordinates to real length, i.e. index position * voxel size. If False, all output coordinates
+    # are simply based on pixel positions [0, 1, 2 .. N] where N is the total number of pixels on any given axis.
     'coords_to_microns': True,  # The voxel dimensions are read from metadata (see: ImageJ image>properties)
 
-# If labels already exist set to True. If False, the labels will be predicted based on microscopy images.
-# Otherwise only result tables will be constructed.
+    # If labels already exist set to True. If False, the labels will be predicted based on microscopy images.
+    # Otherwise only result tables will be constructed.
     'label_existence': False,
 
-# ZYX-axes voxel dimensions in microns. Size is by default read from image metadata.
-# KEEP AS None UNLESS SIZE METADATA IS WRONG. Dimensions are given as tuple, i.e. force_voxel_size=(Zdim, Ydim, Xdim)
+    # ZYX-axes voxel dimensions in microns. Size is by default read from image metadata.
+    # KEEP AS None UNLESS SIZE METADATA IS WRONG. Dimensions are given as tuple, i.e. force_voxel_size=(Zdim, Ydim, Xdim)
     'force_voxel_size': None
-# 10x=(8.2000000, 0.6500002, 0.6500002); 20x=(3.4, 0.325, 0.325)
+    # 10x=(8.2000000, 0.6500002, 0.6500002); 20x=(3.4, 0.325, 0.325)
 }
 
 # Give configuration for label prediction:
