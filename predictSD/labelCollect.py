@@ -338,6 +338,7 @@ class ImageFile:
         self.channels = None
         self.axes = None
         self.voxel_dims = force_dims
+        self.dtype = None
         self._define_attributes(self.path)
 
     @property
@@ -379,6 +380,8 @@ class ImageFile:
                 except AttributeError:
                     self.channels = None
                 # self.bits = _get_tag(tif, "BitsPerSample")
+                # TODO: define existing units - tif.imagej_metadata.get('unit') ; "\\u00B5m" is micrometer
+                self.dtype = tif.series[0].dtype
 
                 # Find micron sizes of voxels
                 if not self.is_label and self.voxel_dims is None:
@@ -982,7 +985,7 @@ class PredictObjects:
         save_label = pl.Path(out_path).joinpath(f'{file_stem}.labels.tif')
 
         # Save the label image:
-        save_tiff_imagej_compatible(str(save_label), labels.astype('int16'), axes=self.image.axes.replace('C', ''),
+        save_tiff_imagej_compatible(str(save_label), labels.astype(self.image.dtype), axes=self.image.axes.replace('C', ''),
                                     **{"imagej": True,
                                        "resolution": (1. / self.image.voxel_dims[1], 1. / self.image.voxel_dims[2]),
                                        "metadata": {'spacing': self.image.voxel_dims[0]}})
@@ -1139,6 +1142,14 @@ def read_model(model_func: Type[Union[StarDist3D, StarDist2D]], model_name: str,
 def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path, str],
                    path_to_label: Union[pl.Path, str], imagej_path: Union[pl.Path, str], channel_n: int = 1) -> None:
     """Create flattened, overlaid tif-image of the intensities and labels."""
+    def _find_lut(dirpath, luts):
+        for item in luts:
+            try:
+                next(dirpath.glob(f'^{item}*'))
+                return item
+            except StopIteration:
+                continue
+
     # Create output-directory
     pl.Path(save_path).parent.mkdir(exist_ok=True)
 
@@ -1148,18 +1159,19 @@ def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path,
 
     # Test that required files exist:
     if not pl.Path(imagej_path).exists():
-        print("Path to ImageJ run-file is incorrect. Overlay-plots will not be created.")
+        warn("Path to ImageJ run-file is incorrect. Overlay-plots will not be created.")
         return
     if not macro_file.exists():
-        print("Label overlay plotting requires macro file 'overlayLabels.ijm'")
+        warn("Label overlay plotting requires macro file 'overlayLabels.ijm'")
         return
 
     # Parse run command and arguments:
-    input_args = ";;".join([str(save_path), str(path_to_image), str(path_to_label), str(channel_n)])
+    lut_name = _find_lut(pl.Path(imagej_path).parent.joinpath("luts"), ['glasbey_inverted', '16_colors', '16 Colors'])
+    input_args = ";;".join([str(save_path), str(path_to_image), str(path_to_label), str(channel_n), lut_name])
     fiji_cmd = " ".join([str(imagej_path), "--headless", "-macro", str(macro_file), f'"{input_args}"'])
     print("Creating overlay")
     try:
-        po = subprocess.run(fiji_cmd, shell=True, check=True, capture_output=True, stdin=subprocess.PIPE)
+        po = subprocess.run(fiji_cmd, shell=True, check=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     except subprocess.CalledProcessError as e:
         warn(e.stderr)
 
