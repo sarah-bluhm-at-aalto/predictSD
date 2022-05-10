@@ -1,6 +1,6 @@
 tensorflow
-jupyter-tensorboard
-nodejs
+# jupyter-tensorboard       # Not needed for use
+# nodejs                    # Not needed for use
 npm
 pybind11
 gputools

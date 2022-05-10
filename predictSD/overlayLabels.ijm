@@ -26,9 +26,11 @@ Stack.setDisplayMode("color");
 Stack.setChannel(1);
 run("Grays");
 Stack.setChannel(2);
-run("glasbey_inverted");
+// Apply color to labels
+run(argList[4]);
+
 Stack.setDisplayMode("composite");
 
 save(argList[0]);
 run("Close All");
-run("Quit");
+//run("Quit");

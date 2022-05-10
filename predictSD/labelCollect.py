@@ -1,5 +1,5 @@
 r"""
-@version: 0.1
+@version: 0.1.1
 @author: Arto I. Viitanen
 
 Distributed under GNU General Public License v3.0
@@ -37,26 +37,27 @@ except IndexError:
 # INPUT/OUTPUT PATHS
 # ------------------
 PREDICTSD_VARS = {
-    'image_path': r'C:\testSet\images',
-    'label_path': r'C:\testSet\images\masks',
-    'output_path': r'C:\testSet\images\results',
+    # On Windows, give paths as: r'c:\PATH\TO\DIR'
+    'image_path': '/home/exp/images',
+    'label_path': '/home/exp/masks',
+    'output_path': '/home/exp/results',
 
-# Whether to save label data in LAM-compatible format and folder hierarchy
-# This expects that the images are named in a compatible manner, i.e. "samplegroup_samplename.tif"
+    # Whether to save label data in LAM-compatible format and folder hierarchy
+    # This expects that the images are named in a compatible manner, i.e. "samplegroup_samplename.tif"
     'create_lam_output': True,
 
-# Whether to transform coordinates to real length, i.e. index position * voxel size. If False, all output coordinates
-# are simply based on pixel positions [0, 1, 2 .. N] where N is the total number of pixels on any given axis.
+    # Whether to transform coordinates to real length, i.e. index position * voxel size. If False, all output coordinates
+    # are simply based on pixel positions [0, 1, 2 .. N] where N is the total number of pixels on any given axis.
     'coords_to_microns': True,  # The voxel dimensions are read from metadata (see: ImageJ image>properties)
 
-# If labels already exist set to True. If False, the labels will be predicted based on microscopy images.
-# Otherwise only result tables will be constructed.
+    # If labels already exist set to True. If False, the labels will be predicted based on microscopy images.
+    # Otherwise only result tables will be constructed.
     'label_existence': False,
 
-# ZYX-axes voxel dimensions in microns. Size is by default read from image metadata.
-# KEEP AS None UNLESS SIZE METADATA IS WRONG. Dimensions are given as tuple, i.e. force_voxel_size=(Zdim, Ydim, Xdim)
+    # ZYX-axes voxel dimensions in microns. Size is by default read from image metadata.
+    # KEEP AS None UNLESS SIZE METADATA IS WRONG. Dimensions are given as tuple, i.e. force_voxel_size=(Zdim, Ydim, Xdim)
     'force_voxel_size': None
-# 10x=(8.2000000, 0.6500002, 0.6500002); 20x=(3.4, 0.325, 0.325)
+    # 10x=(8.2000000, 0.6500002, 0.6500002); 20x=(3.4, 0.325, 0.325)
 }
 
 # Give configuration for label prediction:
@@ -268,7 +269,6 @@ class ImageData:
         # Create DataFrame that contains named values of each voxel
         column_data = {"ID": self.labels.img[notnull]}
         column_data.update({l: notnull[i] for i, l in enumerate(self.image.axes.replace('C', ''))})
-        #column_data = {"ID": self.labels.img[notnull], "Z": notnull[0], "Y": notnull[1], "X": notnull[2]}
         column_data.update(self._get_intensities(notnull))
         return pd.DataFrame(column_data)
 
@@ -338,6 +338,7 @@ class ImageFile:
         self.channels = None
         self.axes = None
         self.voxel_dims = force_dims
+        self.dtype = None
         self._define_attributes(self.path)
 
     @property
@@ -379,6 +380,8 @@ class ImageFile:
                 except AttributeError:
                     self.channels = None
                 # self.bits = _get_tag(tif, "BitsPerSample")
+                # TODO: define existing units - tif.imagej_metadata.get('unit') ; "\\u00B5m" is micrometer
+                self.dtype = tif.series[0].dtype
 
                 # Find micron sizes of voxels
                 if not self.is_label and self.voxel_dims is None:
@@ -565,7 +568,6 @@ class CollectLabelData:
             one object.
         """
         def __intensity_slope(yaxis, xaxis):
-            # TODO: fix slope calculation, multichannel fails (if NaN present?)
             # rescale to [0,1]
             yx = (yaxis - np.min(yaxis)) / np.ptp(yaxis)
             xaxis = xaxis.iloc(axis=0)[yx.index.min():yx.index.max() + 1]
@@ -801,7 +803,7 @@ class PredictObjects:
         "memory_limit": None, "imagej_path": None, "fill_holes": True
     }
 
-    def __init__(self, images: ImageData, mdir: Union[str, pl.Path]=None,  **prediction_config) -> None:
+    def __init__(self, images: ImageData, mdir: Union[str, pl.Path] = None,  **prediction_config) -> None:
         """
         Parameters
         ----------
@@ -841,8 +843,7 @@ class PredictObjects:
             StarDist label predictions, otherwise returns None.
         """
         dout = self.config.get('return_details') if 'return_details' in self.config.keys() else return_details
-        if dout:
-            out_details = dict()
+        out_details = dict()
         for model_and_ch in self.model_list:
             if not overwrite and self.test_label_existence(model_and_ch[0], out_path):
                 continue
@@ -962,7 +963,7 @@ class PredictObjects:
             img = normalize(self.image.get_channels(chan), 1, 99.8, axis=(0, 1, 2))
         probt, nmst = config.get('probability_threshold'), config.get('nms_threshold')
         print(f"\n{self.image.name}; Model = {model_name} ; Image dims = {self.image.shape}" # ; Thresholds:" +
-              # TODO: account for printing tresholds from either model or from user input
+              # TODO account for printing thresholds from either model or from user input
               # f"{str(probt) if probt is None else round(probt, 3)} probability, " +
               # f"{str(nmst) if nmst is None else round(nmst, 3)} NMS)"
               )
@@ -986,8 +987,7 @@ class PredictObjects:
         save_label = pl.Path(out_path).joinpath(f'{file_stem}.labels.tif')
 
         # Save the label image:
-        # TODO: Copy label type from intensity image
-        save_tiff_imagej_compatible(str(save_label), labels.astype('int16'), axes=self.image.axes.replace('C', ''),
+        save_tiff_imagej_compatible(str(save_label), labels.astype(self.image.dtype), axes=self.image.axes.replace('C', ''),
                                     **{"imagej": True,
                                        "resolution": (1. / self.image.voxel_dims[1], 1. / self.image.voxel_dims[2]),
                                        "metadata": {'spacing': self.image.voxel_dims[0]}})
@@ -1144,27 +1144,39 @@ def read_model(model_func: Type[Union[StarDist3D, StarDist2D]], model_name: str,
 def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path, str],
                    path_to_label: Union[pl.Path, str], imagej_path: Union[pl.Path, str], channel_n: int = 1) -> None:
     """Create flattened, overlaid tif-image of the intensities and labels."""
+    def _find_lut(dirpath, luts):
+        for item in luts:
+            try:
+                next(dirpath.glob(f'^{item}.lut'))
+                return item
+            except StopIteration:
+                continue
+        return "Green"
+
     # Create output-directory
     pl.Path(save_path).parent.mkdir(exist_ok=True)
 
     # Find path to predictSD's ImageJ macro for the overlay image creation:
-    macro_file = pl.Path(__file__).parent.joinpath("overlayLabels.ijm").resolve()
+    file_dir = pl.Path(__file__).parent.absolute()
+    macro_file = file_dir.joinpath("overlayLabels.ijm")
 
     # Test that required files exist:
     if not pl.Path(imagej_path).exists():
-        print("Path to ImageJ run-file is incorrect. Overlay-plots will not be created.")
+        warn("Path to ImageJ run-file is incorrect. Overlay-plots will not be created.")
         return
     if not macro_file.exists():
-        print("Label overlay plotting requires macro file 'overlayLabels.ijm'")
+        warn("Label overlay plotting requires macro file 'overlayLabels.ijm'")
         return
 
     # Parse run command and arguments:
-    input_args = ";;".join([str(save_path), str(path_to_image), str(path_to_label), str(channel_n)])
-    fiji_cmd = " ".join([str(imagej_path), "--headless", "-macro", str(macro_file), input_args])
+    lut_name = _find_lut(pl.Path(imagej_path).parent.joinpath("luts"), ['glasbey_inverted', '16_colors', '16 Colors'])
+    input_args = ";;".join([str(save_path), str(path_to_image), str(path_to_label), str(channel_n), lut_name])
+    fiji_cmd = " ".join([str(imagej_path), "--headless", "-macro", str(macro_file), f'"{input_args}"'])
     print("Creating overlay")
-    po = subprocess.run(fiji_cmd, shell=True, check=True, capture_output=True, stdin=subprocess.PIPE)
-    if po.stderr:
-        warn(f"Overlay {po.stderr}")
+    try:
+        po = subprocess.run(fiji_cmd, shell=True, check=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    except subprocess.CalledProcessError as e:
+        warn(e.stderr)
 
 
 def get_tiff_dtype(numpy_dtype: str) -> int:
