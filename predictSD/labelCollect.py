@@ -108,8 +108,8 @@ PREDICTSD_CONFIG = {
     # ----------------------------------------------------------------
 
     # Set to None if image/label -overlay images are not required.
-    "imagej_path": None
-    # Alternatively, give full path to run-file, e.g. r'C:\Programs\Fiji.app\ImageJ-win64.exe', '/home/ImageJ/ImageJ'
+    "imagej_path": ij_path
+    # Alternatively, give full path to run-file, e.g. r'C:\Programs\Fiji.app\ImageJ-win64.exe',
     ####################################
 }
 
