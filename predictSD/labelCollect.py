@@ -1145,10 +1145,11 @@ def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path,
     def _find_lut(dirpath, luts):
         for item in luts:
             try:
-                next(dirpath.glob(f'^{item}*'))
+                next(dirpath.glob(f'^{item}.lut'))
                 return item
             except StopIteration:
                 continue
+        return "Green"
 
     # Create output-directory
     pl.Path(save_path).parent.mkdir(exist_ok=True)
