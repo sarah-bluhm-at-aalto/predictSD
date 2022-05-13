@@ -4,9 +4,6 @@ r"""
 
 Distributed under GNU General Public License v3.0
 """
-
-from __future__ import print_function, unicode_literals, absolute_import, division
-
 import os
 import pathlib as pl
 import subprocess
@@ -85,7 +82,7 @@ PREDICTSD_CONFIG = {
     # These variables are the primary way to influence label prediction and set values for ALL used models!
     # If in need of finer tuning, edit config.json's within models
     # [0-1 ; None] Non-maximum suppression, see: https://towardsdatascience.com/non-maximum-suppression-nms-93ce178e177c
-    "nms_threshold": None,
+    "nms_threshold": 0.2,
     # [0-1 ; None] Probability threshold, decrease if too few objects found, increase if  too many
     "probability_threshold": 0.2,
     # ----------------------------------------------------------------
@@ -569,14 +566,13 @@ class CollectLabelData:
         """
         def __intensity_slope(yaxis, xaxis):
             # rescale to [0,1]
-            yx = (yaxis - np.min(yaxis)) / np.ptp(yaxis)
+            yx = (yaxis - yaxis.min()) / np.ptp(yaxis)
             xaxis = xaxis.iloc(axis=0)[yx.index.min():yx.index.max() + 1]
-            xx = (xaxis - np.min(xaxis)) / np.ptp(xaxis)
-            # inds = np.invert(xx.isna().add(yx.isna()))
+            xx = (xaxis - xaxis.min()) / np.ptp(xaxis)
+            inds = np.invert(np.array([xx.isna(), yx.isna()]).any(axis=0))
             try:
-                # out = np.polyfit(xx.loc[inds,:], yx.loc[inds,:], deg=1)[0]
-                out = np.polynomial.polynomial.Polynomial.fit(xx, yx, deg=1)
-                return out.coef[0]
+                out = np.polynomial.polynomial.Polynomial.fit(xx[inds], yx[inds], deg=1, window=[0., 1.], domain=None)
+                return out.coef[1]
             except np.linalg.LinAlgError:
                 return np.nan
 
@@ -1171,7 +1167,7 @@ def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path,
     # Parse run command and arguments:
     lut_name = _find_lut(pl.Path(imagej_path).parent.joinpath("luts"), ['glasbey_inverted', '16_colors', '16 Colors'])
     input_args = ";;".join([str(save_path), str(path_to_image), str(path_to_label), str(channel_n), lut_name])
-    fiji_cmd = " ".join([str(imagej_path), "--headless", "-macro", str(macro_file), f'"{input_args}"'])
+    fiji_cmd = " ".join([str(imagej_path), "--headless -macro", str(macro_file), f'"{input_args}"'])
     print("Creating overlay")
     try:
         po = subprocess.run(fiji_cmd, shell=True, check=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)

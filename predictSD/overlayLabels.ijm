@@ -5,7 +5,9 @@ chn = parseInt(argList[3]) + 1;
 
 // Flatten microscopy image based on max intensity
 open(argList[1]);
+iLabel=getTitle();
 run("Duplicate...", "duplicate channels="+chn+"");
+close(iLabel)
 run("Enhance Contrast", "saturated=0.35");
 
 if(nSlices > 1) {
