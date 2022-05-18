@@ -565,13 +565,14 @@ class CollectLabelData:
             one object.
         """
         def __intensity_slope(yaxis, xaxis):
+            xaxis = xaxis.iloc(axis=0)[yaxis.index.min():yaxis.index.max() + 1]
+            inds = np.invert(np.array([xaxis.isna(), yaxis.isna()]).any(axis=0))
+            yaxis, xaxis = yaxis[inds], xaxis[inds]
             # rescale to [0,1]
             yx = (yaxis - yaxis.min()) / np.ptp(yaxis)
-            xaxis = xaxis.iloc(axis=0)[yx.index.min():yx.index.max() + 1]
             xx = (xaxis - xaxis.min()) / np.ptp(xaxis)
-            inds = np.invert(np.array([xx.isna(), yx.isna()]).any(axis=0))
             try:
-                out = np.polynomial.polynomial.Polynomial.fit(xx[inds], yx[inds], deg=1, window=[0., 1.], domain=None)
+                out = np.polynomial.polynomial.Polynomial.fit(xx, yx, deg=1, window=[0., 1.], domain=None)
                 return out.coef[1]
             except np.linalg.LinAlgError:
                 return np.nan
@@ -589,7 +590,7 @@ class CollectLabelData:
         voxel_sorted = voxel_data.sort_values(by='ID').reset_index(drop=True)
 
         # Collapse individual voxels into label-specific averages.
-        output = voxel_sorted.groupby("ID").mean()
+        output = voxel_sorted.groupby("ID").agg(np.nanmean)
 
         # Calculate other variables of interest
         output = output.assign(
@@ -599,19 +600,19 @@ class CollectLabelData:
 
         # Find distance to each voxel from its' label's centroid (for intensity slope)
         coords = voxel_sorted.loc[:, ['ID', *colmp.keys()]].groupby("ID")
-        pxl_distance = np.sqrt(coords.transform(lambda x: (x - x.mean())**2).sum(axis=1))
+        pxl_distance = np.sqrt(coords.transform(lambda x: (x - x.mean(skipna=True))**2).sum(axis=1))
 
         # Get intensities and calculate related variables for all image channels
         intensities = voxel_sorted.loc[:, voxel_sorted.columns.difference(['X', 'Y', 'Z'])].groupby("ID")
         output = output.join([
             # Intensity minimum value
-            intensities.min().rename(lambda x: x.replace("Mean", "Min"), axis=1),
+            intensities.agg(np.nanmin).rename(lambda x: x.replace("Mean", "Min"), axis=1),
             # Intensity maximum value
-            intensities.max().rename(lambda x: x.replace("Mean", "Max"), axis=1),
+            intensities.agg(np.nanmax).rename(lambda x: x.replace("Mean", "Max"), axis=1),
             # Intensity median
-            intensities.median().rename(lambda x: x.replace("Mean", "Median"), axis=1),
+            intensities.agg(np.nanmedian).rename(lambda x: x.replace("Mean", "Median"), axis=1),
             # Intensity standard deviation
-            intensities.std().rename(lambda x: x.replace("Mean", "StdDev"), axis=1),
+            intensities.agg(np.nanstd).rename(lambda x: x.replace("Mean", "StdDev"), axis=1),
             # slope of normalized label intensities as a function of distance from centroid
             intensities.agg(lambda yax, xax=pxl_distance: __intensity_slope(yax, xax)
                             ).rename(lambda x: x.replace("Mean", "Slope"), axis=1)]
