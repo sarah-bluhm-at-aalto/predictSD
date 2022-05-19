@@ -1,38 +1,34 @@
 paths = getArgument();
 argList = split(paths, ";;");
-
-chn = parseInt(argList[3]) + 1;
-
-// Flatten microscopy image based on max intensity
-open(argList[1]);
-iLabel=getTitle();
-run("Duplicate...", "duplicate channels="+chn+"");
-close(iLabel)
-run("Enhance Contrast", "saturated=0.35");
-
-if(nSlices > 1) {
-    run("Z Project...", "projection=[Max Intensity]");
-}
-pImg=getTitle();
+outPath = argList[0];
+imagePath = argList[1];
+labelPath = argList[2];
+chNum = parseInt(argList[3]) + 1;
+lutName = argList[4];
 
 // Flatten label image based on maximum intensity, i.e. largest label ID is drawn on top of smaller
-open(argList[2]);
+open(labelPath);
+lblName=getTitle();
 if(nSlices > 1) {
     run("Z Project...", "projection=[Max Intensity]");
 }
+run(lutName);
 pLabel=getTitle();
+close(lblName);
 
-// Merge flattened images and set color maps
-run("Merge Channels...", "c1=["+pImg+"] c2=["+pLabel+"] create");
-Stack.setDisplayMode("color");
-Stack.setChannel(1);
+// Flatten microscopy image based on max intensity
+open(imagePath);
+imgName=getTitle();
+if(nSlices > 1) {
+    run("Z Project...", "projection=[Max Intensity]");
+}
+run("Duplicate...", "duplicate channels="+chNum+"");
+close(imgName);
 run("Grays");
-Stack.setChannel(2);
-// Apply color to labels
-run(argList[4]);
+run("Enhance Contrast", "saturated=0.35");
 
-Stack.setDisplayMode("composite");
-
-save(argList[0]);
+// Overlay
+run("Add Image...", "image="+pLabel+" x=0 y=0 opacity=70 zero");
+save(outPath);
 run("Close All");
 //run("Quit");

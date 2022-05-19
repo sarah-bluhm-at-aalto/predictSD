@@ -105,8 +105,9 @@ PREDICTSD_CONFIG = {
     # ----------------------------------------------------------------
 
     # Set to None if image/label -overlay images are not required.
+    # Alternatively, give full path to run-file, e.g. r'C:\Programs\Fiji.app\ImageJ-win64.exe'
+    # NOTE: If using Linux, the ImageJ program should be open to create the overlays!
     "imagej_path": ij_path
-    # Alternatively, give full path to run-file, e.g. r'C:\Programs\Fiji.app\ImageJ-win64.exe',
     ####################################
 }
 
@@ -1141,11 +1142,11 @@ def read_model(model_func: Type[Union[StarDist3D, StarDist2D]], model_name: str,
 def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path, str],
                    path_to_label: Union[pl.Path, str], imagej_path: Union[pl.Path, str], channel_n: int = 1) -> None:
     """Create flattened, overlaid tif-image of the intensities and labels."""
-    def _find_lut(dirpath, luts):
-        for item in luts:
+    def _find_lut(lut_dir, lut_dict):
+        for item in lut_dict.keys():
             try:
-                next(dirpath.glob(f'{item}.lut'))
-                return item
+                next(lut_dir.glob(f'{item}.lut'))
+                return lut_dict.get(item)
             except StopIteration:
                 continue
         return "Green"
@@ -1166,20 +1167,25 @@ def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path,
         return
 
     # Parse run command and arguments:
-    lut_name = _find_lut(pl.Path(imagej_path).parent.joinpath("luts"), ['glasbey_inverted', '16_colors', '16 Colors'])
+    luts = {'glasbey_inverted': 'glasbey_inverted', '16_colors': '16_colors', '16_Colors': '16 Colors'}
+    lut_name = _find_lut(pl.Path(imagej_path).parent.joinpath("luts"), luts)
     input_args = ";;".join([str(save_path), str(path_to_image), str(path_to_label), str(channel_n), lut_name])
-    fiji_cmd = " ".join([str(imagej_path), "--headless -macro", str(macro_file), f'"{input_args}"'])
+    # fiji_cmd = " ".join([str(imagej_path), "--headless --console -macro", str(macro_file), f'"{input_args}"'])
     print("Creating overlay")
+    ps = subprocess.Popen(
+        # fiji_cmd,
+        [str(imagej_path), "--headless", "-macro", str(macro_file), f'{input_args}'],
+        shell=False, stdout=subprocess.PIPE
+    )
     try:
-        po = subprocess.run(fiji_cmd, shell=True, check=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        outs, errs = ps.communicate(timeout=20)
+        # ps = subprocess.run(fiji_cmd, shell=True, check=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, timeout=10)
     except subprocess.CalledProcessError as e:
         warn(e.stderr)
-
-
-def get_tiff_dtype(numpy_dtype: str) -> int:
-    """Get TIFF datatype of image."""
-    num = numpy_dtype.split('int')[-1]
-    return ['8', 'placeholder', '16', '32'].index(num) + 1
+    except subprocess.TimeoutExpired:
+        warn("Overlay-subprocess timeout!\nSubprocess may require ImageJ to be open!\n")
+        ps.kill()
+        # outs, errs = ps.communicate()
 
 
 def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf: dict = None, lam_out: bool = True,
