@@ -10,7 +10,7 @@ import subprocess
 import sys
 from copy import deepcopy
 from logging import NOTSET, disable, captureWarnings
-from typing import Union, Tuple, List, Optional, Type, Set  # TypedDict
+from typing import Union, Tuple, List, Optional, Type, Set, NoReturn  # TypedDict
 from warnings import warn
 
 import numpy as np
@@ -28,7 +28,7 @@ from tifffile import TiffFile, imread
 # Type aliases
 Pathlike = Union[str, pl.Path]
 
-# function below searches for ImageJ exe-file (newest version) on University computers. The paths/names can be changed.
+# The lines below search for ImageJ exe-file (newest version) on University computers. The paths/names can be changed.
 try:
     ij_path = [*pl.Path(r"C:\hyapp").glob("fiji-win64*")][-1].joinpath(r"Fiji.app", "ImageJ-win64.exe")
 except IndexError:
@@ -38,9 +38,9 @@ except IndexError:
 # ------------------
 PREDICTSD_VARS = {
     # On Windows, give paths as: r'c:\PATH\TO\DIR'
-    'image_path': r'X:\image_data\CtBP_CtBP_Y_GA-1_10X\images',
-    'label_path': r'X:\image_data\CtBP_CtBP_Y_GA-1_10X\masks',
-    'output_path': r'X:\image_data\CtBP_CtBP_Y_GA-1_10X\results',
+    'image_path': '/home/exp/images',
+    'label_path': '/home/exp/masks',
+    'output_path': '/home/exp/results',
 
     # Whether to save label data in LAM-compatible format and folder hierarchy
     # This expects that the images are named in a compatible manner, i.e. "samplegroup_samplename.tif"
@@ -108,8 +108,9 @@ PREDICTSD_CONFIG = {
     # ----------------------------------------------------------------
 
     # Set to None if image/label -overlay images are not required.
+    # Alternatively, give full path to run-file, e.g. r'C:\Programs\Fiji.app\ImageJ-win64.exe'
+    # NOTE: If using Linux, the ImageJ program should be open to create the overlays!
     "imagej_path": ij_path
-    # Alternatively, give full path to run-file, e.g. r'C:\Programs\Fiji.app\ImageJ-win64.exe',
     ####################################
 }
 
@@ -492,8 +493,6 @@ class CollectLabelData:
             Path to the save folder if save_data is True.
         filters : list
             List of tuples containing filters to apply. See CollectLabelData.filter().
-        filter_images : List[Pathlike]
-            Paths to label images that will be cleaned from the filtered labels by setting their pixel values to zero.
         """
         if save_data and out_path is None:
             print("CollectLabelData.__call__() requires path to output-folder (out_path: str, pathlib.Path).")
@@ -678,6 +677,12 @@ class CollectLabelData:
         decimal_precision : int, bool
             Precision of decimals in the saved file.
         """
+        def _is_empty(obj):
+            if obj is None: return True
+            elif isinstance(obj, pd.DataFrame) and obj.empty: return True
+            return False
+
+        data = None
         if isinstance(out_path, str):  # Change path string to Path-object
             out_path = pl.Path(out_path)
         # Parse wanted dataset from various arguments:
@@ -688,6 +693,9 @@ class CollectLabelData:
             data = item
         else:
             print("Type of given item is not supported.")
+            return
+        if _is_empty(data):
+            warn("No labels found; results not saved.")
             return
 
         if lam_compatible:
@@ -1170,11 +1178,11 @@ def read_model(model_func: Type[Union[StarDist3D, StarDist2D]], model_name: str,
 def overlay_images(save_path: Pathlike, path_to_image: Pathlike,
                    path_to_label: Pathlike, imagej_path: Pathlike, channel_n: int = 1) -> None:
     """Create flattened, overlaid tif-image of the intensities and labels."""
-    def _find_lut(dirpath, luts):
-        for item in luts:
+    def _find_lut(lut_dir, lut_dict):
+        for item in lut_dict.keys():
             try:
-                next(dirpath.glob(f'{item}.lut'))
-                return item
+                next(lut_dir.glob(f'{item}.lut'))
+                return lut_dict.get(item)
             except StopIteration:
                 continue
         return "Green"
@@ -1195,20 +1203,25 @@ def overlay_images(save_path: Pathlike, path_to_image: Pathlike,
         return
 
     # Parse run command and arguments:
-    lut_name = _find_lut(pl.Path(imagej_path).parent.joinpath("luts"), ['glasbey_inverted', '16_colors', '16 Colors'])
+    luts = {'glasbey_inverted': 'glasbey_inverted', '16_colors': '16_colors', '16_Colors': '16 Colors'}
+    lut_name = _find_lut(pl.Path(imagej_path).parent.joinpath("luts"), luts)
     input_args = ";;".join([str(save_path), str(path_to_image), str(path_to_label), str(channel_n), lut_name])
-    fiji_cmd = " ".join([str(imagej_path), "--headless -macro", str(macro_file), f'"{input_args}"'])
+    # fiji_cmd = " ".join([str(imagej_path), "--headless --console -macro", str(macro_file), f'"{input_args}"'])
     print("Creating overlay")
+    ps = subprocess.Popen(
+        # fiji_cmd,
+        [str(imagej_path), "--headless", "-macro", str(macro_file), f'{input_args}'],
+        shell=False, stdout=subprocess.PIPE
+    )
     try:
-        po = subprocess.run(fiji_cmd, shell=True, check=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        outs, errs = ps.communicate(timeout=20)
+        # ps = subprocess.run(fiji_cmd, shell=True, check=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, timeout=10)
     except subprocess.CalledProcessError as e:
         warn(e.stderr)
-
-
-def get_tiff_dtype(numpy_dtype: str) -> int:
-    """Get TIFF datatype of image."""
-    num = numpy_dtype.split('int')[-1]
-    return ['8', 'placeholder', '16', '32'].index(num) + 1
+    except subprocess.TimeoutExpired:
+        warn("Overlay-subprocess timeout!\nSubprocess may require ImageJ to be open!\n")
+        ps.kill()
+        # outs, errs = ps.communicate()
 
 
 def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf: dict = None, lam_out: bool = True,
@@ -1273,7 +1286,10 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
         # TODO: Add creation of overlay images
         # Print description of collected data
         for data in label_data.output:
-            print(f"Model:  {data[0]}\nFile:  {data[1]}\n{data[2].describe()}\n")
+            if data[2] is None or data[2].empty:
+                print(f"Model:  {data[0]}\nFile:  {data[1]}\n{'NO FOUND LABELS'}\n")
+            else:
+                print(f"Model:  {data[0]}\nFile:  {data[1]}\n{data[2].describe()}\n")
     imgw = dim_warning.values()
     if to_microns and any(imgw) and not all(imgw):
         warn(f"UserWarning: {sum(imgw)}/{len(dim_warning.keys())} images have missing dimension info."+""
