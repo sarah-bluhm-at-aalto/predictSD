@@ -25,7 +25,7 @@ from tifffile import TiffFile, imread
 # from tensorflow.keras.utils import Sequence
 # import tensorflow as tf
 
-# function below searches for ImageJ exe-file (newest version) on University computers. The paths/names can be changed.
+# The line below searches for ImageJ exe-file (newest version) on University computers. The paths/names can be changed.
 try:
     ij_path = [*pl.Path(r"C:\hyapp").glob("fiji-win64*")][-1].joinpath(r"Fiji.app", "ImageJ-win64.exe")
 except IndexError:
@@ -656,6 +656,12 @@ class CollectLabelData:
         decimal_precision : int, bool
             Precision of decimals in the saved file.
         """
+        def _is_empty(obj):
+            if obj is None: return True
+            elif isinstance(obj, pd.DataFrame) and obj.empty: return True
+            return False
+
+        data = None
         if isinstance(out_path, str):  # Change path string to Path-object
             out_path = pl.Path(out_path)
         # Parse wanted dataset from various arguments:
@@ -666,6 +672,9 @@ class CollectLabelData:
             data = item
         else:
             print("Type of given item is not supported.")
+            return
+        if _is_empty(data):
+            warn("No labels found; results not saved.")
             return
 
         if lam_compatible:
@@ -1248,7 +1257,10 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
 
         # Print description of collected data
         for data in label_data.output:
-            print(f"Model:  {data[0]}\nFile:  {data[1]}\n{data[2].describe()}\n")
+            if data[2] is None or data[2].empty:
+                print(f"Model:  {data[0]}\nFile:  {data[1]}\n{'NO FOUND LABELS'}\n")
+            else:
+                print(f"Model:  {data[0]}\nFile:  {data[1]}\n{data[2].describe()}\n")
     imgw = dim_warning.values()
     if to_microns and any(imgw) and not all(imgw):
         warn(f"UserWarning: {sum(imgw)}/{len(dim_warning.keys())} images have missing dimension info."+""
