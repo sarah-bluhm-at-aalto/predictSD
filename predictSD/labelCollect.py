@@ -10,7 +10,7 @@ import subprocess
 import sys
 from copy import deepcopy
 from logging import NOTSET, disable, captureWarnings
-from typing import Union, Tuple, List, Optional, Type  # TypedDict
+from typing import Union, Tuple, List, Optional, Type, Set  # TypedDict
 from warnings import warn
 
 import numpy as np
@@ -25,6 +25,9 @@ from tifffile import TiffFile, imread
 # from tensorflow.keras.utils import Sequence
 # import tensorflow as tf
 
+# Type aliases
+Pathlike = Union[str, pl.Path]
+
 # function below searches for ImageJ exe-file (newest version) on University computers. The paths/names can be changed.
 try:
     ij_path = [*pl.Path(r"C:\hyapp").glob("fiji-win64*")][-1].joinpath(r"Fiji.app", "ImageJ-win64.exe")
@@ -35,9 +38,9 @@ except IndexError:
 # ------------------
 PREDICTSD_VARS = {
     # On Windows, give paths as: r'c:\PATH\TO\DIR'
-    'image_path': '/home/exp/images',
-    'label_path': '/home/exp/masks',
-    'output_path': '/home/exp/results',
+    'image_path': r'X:\image_data\CtBP_CtBP_Y_GA-1_10X\images',
+    'label_path': r'X:\image_data\CtBP_CtBP_Y_GA-1_10X\masks',
+    'output_path': r'X:\image_data\CtBP_CtBP_Y_GA-1_10X\results',
 
     # Whether to save label data in LAM-compatible format and folder hierarchy
     # This expects that the images are named in a compatible manner, i.e. "samplegroup_samplename.tif"
@@ -130,7 +133,7 @@ class PredictionConfig:  # (TypedDict):
         # Image block division number on the shorter axis from XY.
     memory_limit : Optional[Tuple[int, float]]
         # Tuple of available GPU memory in Mb and fraction of memory to allocate for prediction.
-    imagej_path : Optional[Union[str, pl.Path]]
+    imagej_path : Optional[Pathlike]
         # String or pathlib.Path to ImageJ-executable for overlay plotting.
     fill_holes : bool
         # If True, PredictObjects fills holes in obtained labels.
@@ -188,7 +191,7 @@ class ImageData:
         Switch currently active label-image
     """
 
-    def __init__(self, path_to_image: Union[str, pl.Path], paths_to_labels: Union[List[str], None] = None,
+    def __init__(self, path_to_image: Pathlike, paths_to_labels: Union[List[str], None] = None,
                  voxel_dims: Union[None, tuple] = None) -> None:
         """
         Parameters
@@ -313,7 +316,7 @@ class ImageFile:
         When axis order differs from the required 'Z(C)YX'.
     """
 
-    def __init__(self, filepath: Union[str, pl.Path], is_label: bool = False,
+    def __init__(self, filepath: Pathlike, is_label: bool = False,
                  force_dims: Union[None, Tuple[float]] = None):
         """
         Parameters
@@ -358,7 +361,7 @@ class ImageFile:
         return self._label_name
 
     @label_name.setter
-    def label_name(self, filepath: Union[str, pl.Path]):
+    def label_name(self, filepath: Pathlike):
         """Set label name from name string"""
         if self.is_label:
             self._label_name = str(filepath).split(".labels")[0].split("_")[-1]
@@ -449,7 +452,7 @@ class CollectLabelData:
     save(out_path, item = 0, label_name = None, lam_compatible = True, decimal_precision = 4)
     """
 
-    def __init__(self, image_data: ImageData, label_file: Union[str, pl.Path] = None, label_names: list = None,
+    def __init__(self, image_data: ImageData, label_file: Pathlike = None, label_names: list = None,
                  convert_to_micron: bool = True) -> None:
         """
         Parameters
@@ -478,7 +481,7 @@ class CollectLabelData:
         assert len(self.label_files) == len(names)
         self.output = OutputData(self.label_files, names)
 
-    def __call__(self, save_data: bool = False, out_path: Union[str, pl.Path] = None, filters: list = None, *args,
+    def __call__(self, save_data: bool = False, out_path: Pathlike = None, filters: list = None, *args,
                  **kwargs):
         """Read all label image-files and save label-specific information.
         Parameters
@@ -489,6 +492,8 @@ class CollectLabelData:
             Path to the save folder if save_data is True.
         filters : list
             List of tuples containing filters to apply. See CollectLabelData.filter().
+        filter_images : List[Pathlike]
+            Paths to label images that will be cleaned from the filtered labels by setting their pixel values to zero.
         """
         if save_data and out_path is None:
             print("CollectLabelData.__call__() requires path to output-folder (out_path: str, pathlib.Path).")
@@ -528,30 +533,48 @@ class CollectLabelData:
             all labels with area less than 5, and would additionally filter labels with volume more than 750 from the
             DAPI10x information.
         """
-        for filter_tuple in filter_list:
-            fail_message = f"Filtering with {filter_tuple} failed"
-            items = None
-            name = filter_tuple[0]
-            if isinstance(name, str):
-                if name.lower() == 'all':
-                    items = [i for i in range(len(self.label_files))]
-                else:
-                    try:
-                        items = [self.get_label_names().index(name)]
-                    except ValueError:
-                        print(f"{fail_message} - Item '{name}' not found in {self.get_label_names()}\n")
-            elif isinstance(name, int):
-                if len(self.label_files) < name+1:
-                    print(f"{fail_message} - Index {name} is too large for object of length "
-                          f"{len(self.get_label_names())}.\n")
-                    continue
-                items = [name]
-            if items is not None and len(items) > 0:
-                for item in items:
-                    self.output.filter_output(index=item, column=filter_tuple[1], value=filter_tuple[2],
-                                              filter_type=filter_tuple[3])
+        def __resolve_targets() -> List[int]:
+            targets = []
+            for filter_tuple in filter_list:
+                fail_message = f"Filtering with {filter_tuple} failed"
+                items, name = None, filter_tuple[0]
+                if isinstance(name, str):
+                    if name.lower() == 'all':
+                        items = [i for i in range(len(self.label_files))]
+                    else:
+                        try:
+                            items = [self.get_label_names().index(name)]
+                        except ValueError:
+                            warn(f"{fail_message} - Item '{name}' not found in {self.get_label_names()}\n")
+                elif isinstance(name, int):
+                    if len(self.label_files) < name + 1:
+                        warn(f"{fail_message} - Index {name} is too large for object of length " +
+                              f"{len(self.get_label_names())}.\n")
+                        continue
+                    items = [name]
+                targets.append(items)
+            return targets
 
-    def gather_data(self, label_file: Union[str, pl.Path]) -> Union[pd.DataFrame, None]:
+        def __use_filter(ids):
+            return target in ids
+
+        filtered_ids = []
+        # Resolve targets for each filter:
+        targets = __resolve_targets()
+        # Apply filters for each target
+        for target in range(len(self.label_files)):
+            filters = map(__use_filter, targets)
+
+        # TODO: Add filtering
+        #     if items is not None and len(items) > 0:
+        #         for item in items:
+        #             filtered = self.output.filter_output(index=item, column=filter_tuple[1], value=filter_tuple[2],
+        #                                                  filter_type=filter_tuple[3])
+        #             filtered_ids.append
+        #         if isinstance(filtered, set) and len(filtered) > 0:
+
+
+    def gather_data(self, label_file: Pathlike) -> Union[pd.DataFrame, None]:
         """Get output DataFrame containing descriptive values of the labels.
         Parameters
         ----------
@@ -564,7 +587,7 @@ class CollectLabelData:
             DataFrame with voxel values of each label collapsed into wide-format observations, i.e. each row represents
             one object.
         """
-        def __intensity_slope(yaxis, xaxis):
+        def __intensity_slope(yaxis: pd.Series, xaxis: pd.Series) -> float:
             xaxis = xaxis.iloc(axis=0)[yaxis.index.min():yaxis.index.max() + 1]
             inds = np.invert(np.array([xaxis.isna(), yaxis.isna()]).any(axis=0))
             yaxis, xaxis = yaxis[inds], xaxis[inds]
@@ -623,7 +646,7 @@ class CollectLabelData:
         """Get label names of all label files defined for the instance."""
         return [ImageFile(p, is_label=True).label_name for p in self.label_files]
 
-    def read_labels(self, label_file: Union[str, pl.Path] = None):
+    def read_labels(self, label_file: Pathlike = None):
         """Get label data from label file(s)."""
         # If Class-object does not have pre-defined label files and no label file is given, raise error
         if not self.label_files and label_file is None:
@@ -636,7 +659,7 @@ class CollectLabelData:
             for ind, file_path in enumerate(self.label_files):
                 self.output[ind] = self.gather_data(file_path)
 
-    def save(self, out_path: Union[str, pl.Path], item: Union[int, str, pl.Path, pd.DataFrame] = 0,
+    def save(self, out_path: Pathlike, item: Union[int, str, pl.Path, pd.DataFrame] = 0,
              label_name: str = None, lam_compatible: bool = True, decimal_precision: Union[int, bool] = 4,
              *args) -> None:
         """Save gathered label information from one label file as DataFrame.
@@ -697,7 +720,7 @@ class OutputData:
         If length of label_paths and label_names does not match.
     """
 
-    def __init__(self, label_paths: List[Union[str, pl.Path]], label_names: Optional[List[str]] = None) -> None:
+    def __init__(self, label_paths: List[Pathlike], label_names: Optional[List[str]] = None) -> None:
         self._label_files = [str(p) for p in label_paths]
         l_range = [f"Ch{v}" for v in range(len(label_paths))]
         self._label_names = l_range if label_names is None else label_names
@@ -724,7 +747,7 @@ class OutputData:
             print(f"Output data not found for {self._label_files[item]}.")
         return self._label_names[item], str(self._label_files[item]), self._output[item]
 
-    def filter_output(self, index: int, column: str, value: float, filter_type: str) -> None:
+    def filter_output(self, index: int, column: str, value: float, filter_type: str) -> Union[Set[int], None]:
         """Filter an output DataFrame based on each label's value in given column.
         Parameters
         ----------
@@ -745,7 +768,7 @@ class OutputData:
             else:
                 message = f"Object at index '{index}' is not a DataFrame."
             print(f"Filter failed - {message}\n")
-            return
+            return None
 
         try:
             if filter_type == 'min':
@@ -756,6 +779,7 @@ class OutputData:
                 warn("Filter failed - Type must be either 'min' or 'max'.")
                 return
             self._output[index] = filtered_output
+            return set(output_data.index).difference(set(filtered_output.index))
         except IndexError:
             print(f"Given column name '{column}' not found!\nAvailable columns: {output_data.columns}\n")
 
@@ -800,7 +824,7 @@ class PredictObjects:
         "memory_limit": None, "imagej_path": None, "fill_holes": True
     }
 
-    def __init__(self, images: ImageData, mdir: Union[str, pl.Path] = None,  **prediction_config) -> None:
+    def __init__(self, images: ImageData, mdir: Pathlike = None,  **prediction_config) -> None:
         """
         Parameters
         ----------
@@ -922,7 +946,8 @@ class PredictObjects:
                                                       )
         return labels, details
 
-    def use_model(self, model_input: str):
+    @staticmethod
+    def use_model(model_input: str):
         return PredictObjects.model_instances.get(model_input)
 
     def predict(self, model_and_ch_nro: Tuple[str, int], out_path: str, make_overlay: bool = True,
@@ -984,20 +1009,17 @@ class PredictObjects:
         save_label = pl.Path(out_path).joinpath(f'{file_stem}.labels.tif')
 
         # Save the label image:
-        save_tiff_imagej_compatible(str(save_label), labels.astype(self.image.dtype), axes=self.image.axes.replace('C', ''),
-                                    **{"imagej": True,
-                                       "resolution": (1. / self.image.voxel_dims[1], 1. / self.image.voxel_dims[2]),
-                                       "metadata": {'spacing': self.image.voxel_dims[0]}})
-
+        self.saveastiff(str(save_label), labels)
         # Add path to label paths
         if save_label not in self.label_paths:
             self.label_paths.append(str(save_label))
 
-        if make_overlay and config.get("imagej_path") is not None:  # Create and save overlay tif of the labels
-            ov_save_path = overlay_path if overlay_path is not None else out_path
-            overlay_images(pl.Path(ov_save_path).joinpath(f'overlay_{file_stem}.tif'),
-                           self.image.path, save_label, config.get("imagej_path"),
-                           channel_n=chan)
+        # TODO: replace overlay plotting
+        # if make_overlay and config.get("imagej_path") is not None:  # Create and save overlay tif of the labels
+        #     ov_save_path = overlay_path if overlay_path is not None else out_path
+        #     overlay_images(pl.Path(ov_save_path).joinpath(f'overlay_{file_stem}.tif'),
+        #                    self.image.path, save_label, config.get("imagej_path"),
+        #                    channel_n=chan)
         return labels, details
 
     def define_tiles(self, dims: Tuple[int, int, int]) -> Tuple[int, int, int]:
@@ -1021,12 +1043,19 @@ class PredictObjects:
         # If y-axis is shorter
         return self.config.get("z_div"), self.config.get("short_div"), self.config.get("long_div")
 
-    def test_label_existence(self, model: str, out_path: Union[str, pl.Path]) -> bool:
+    def test_label_existence(self, model: str, out_path: Pathlike) -> bool:
         """Test whether label-file already exists for the current model."""
         file_stem = f'{self.name}_{model}'
         label_file = str(pl.Path(out_path).joinpath(f'{file_stem}.labels.tif'))
         labels = [str(p) for p in self.label_paths]
         return label_file in labels
+
+    def saveastiff(self, savepath, labels):
+        save_tiff_imagej_compatible(savepath, labels.astype(self.image.dtype),
+                                    axes=self.image.axes.replace('C', ''),
+                                    **{"imagej": True,
+                                       "resolution": (1. / self.image.voxel_dims[1], 1. / self.image.voxel_dims[2]),
+                                       "metadata": {'spacing': self.image.voxel_dims[0]}})
 
 
 class HidePrint:
@@ -1105,7 +1134,7 @@ def _get_tag(tif: TiffFile, tag: str) -> Union[None, str, int, float, tuple]:
         return None
 
 
-def create_output_dirs(out_path: Union[str, pl.Path], lbl_path: Union[str, pl.Path]) -> None:
+def create_output_dirs(out_path: Pathlike, lbl_path: Pathlike) -> None:
     """Create result and label-file directories.
     Parameters
     ----------
@@ -1138,8 +1167,8 @@ def read_model(model_func: Type[Union[StarDist3D, StarDist2D]], model_name: str,
         return model
 
 
-def overlay_images(save_path: Union[pl.Path, str], path_to_image: Union[pl.Path, str],
-                   path_to_label: Union[pl.Path, str], imagej_path: Union[pl.Path, str], channel_n: int = 1) -> None:
+def overlay_images(save_path: Pathlike, path_to_image: Pathlike,
+                   path_to_label: Pathlike, imagej_path: Pathlike, channel_n: int = 1) -> None:
     """Create flattened, overlaid tif-image of the intensities and labels."""
     def _find_lut(dirpath, luts):
         for item in luts:
@@ -1238,8 +1267,10 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
         # Get information on label objects
         print("\nCollecting label data.\n")
         label_data = CollectLabelData(images, convert_to_micron=to_microns)
-        label_data(out_path=out_path, lam_compatible=lam_out, filters=prediction_conf.get('filters'), save_data=True)
-
+        label_data(out_path=out_path, lam_compatible=lam_out, filters=prediction_conf.get('filters'), save_data=True
+                   #filter_images=predictor.label_paths
+                   )
+        # TODO: Add creation of overlay images
         # Print description of collected data
         for data in label_data.output:
             print(f"Model:  {data[0]}\nFile:  {data[1]}\n{data[2].describe()}\n")
