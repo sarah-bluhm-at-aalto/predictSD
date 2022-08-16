@@ -27,6 +27,7 @@ from tifffile import TiffFile, imread
 
 # Type aliases
 Pathlike = Union[str, pl.Path]
+Model = Union[StarDist3D, StarDist2D]
 
 # The lines below search for ImageJ exe-file (newest version) on University computers. The paths/names can be changed.
 try:
@@ -171,39 +172,40 @@ class PredictionConfig:  # (TypedDict):
 
 class ImageData:
     """Handle image/label-pairs and find voxels of each object within.
+
     Attributes
     ----------
-    name : str
-        The name stem of the image file, i.e. name without extensions
-    image : labelCollect.ImageFile
-        ImageFile-object pointing to the image to segment.
-    labels : labelCollect.ImageFile
-        An ImageFile-instance pointing to one label-file of self.image. ImageData-objects are limited to one 'active'
-        label-image at a time. The active label-image can be changed with class method select().
-    voxel_dims : tuple[float]
-        Voxel ZYX-dimensions of the image in microns.
+        name : str
+            The name stem of the image file, i.e. name without extensions
+        image : labelCollect.ImageFile
+            ImageFile-object pointing to the image to segment.
+        labels : labelCollect.ImageFile
+            An ImageFile-instance pointing to one label-file of self.image. ImageData-objects are limited to one
+            'active' label-image at a time. The active label-image can be changed with class method select().
+        voxel_dims : tuple[float]
+            Voxel ZYX-dimensions of the image in microns.
 
     Methods
     -------
-    labelled_voxels(self, item: Union[int, str] = None) -> Union[pd.DataFrame, None]
-        Collect IDs (voxel value) and ZYX-coordinates of all labelled voxels in the active label-image, and fetch
-        their intensities from all channels of the microscopy image.
-    select(self, item: Union[int, str]) -> None
-        Switch currently active label-image
+        labelled_voxels(self, item: Union[int, str] = None) -> Union[pd.DataFrame, None]
+            Collect IDs (voxel value) and ZYX-coordinates of all labelled voxels in the active label-image, and fetch
+            their intensities from all channels of the microscopy image.
+        select(self, item: Union[int, str]) -> None
+            Switch currently active label-image
     """
 
     def __init__(self, path_to_image: Pathlike, paths_to_labels: Union[List[str], None] = None,
-                 voxel_dims: Union[None, tuple] = None) -> None:
+                 voxel_dims: Union[None, tuple] = None) -> NoReturn:
         """
         Parameters
         ----------
-        path_to_image : str, pl.Path
-            Path to a image for segmentation and/or label info collection.
-        paths_to_labels : list[str]
-            List of paths to pre-existing label-images for the microscopy images.
-        voxel_dims : tuple[float]
-            The ZYX-lengths of each voxel in microns. If given, forces the input over metadata that may or may not exist
-            in the images.
+            path_to_image : str, pl.Path
+                Path to a image for segmentation and/or label info collection.
+            paths_to_labels : list[str]
+                List of paths to pre-existing label-images for the microscopy images.
+            voxel_dims : tuple[float]
+                The ZYX-lengths of each voxel in microns. If given, forces the input over metadata that may or may not
+                exist in the images.
         """
         self.name = pl.Path(path_to_image).stem
         self.image = ImageFile(path_to_image, force_dims=voxel_dims)
@@ -216,10 +218,11 @@ class ImageData:
 
     def _get_intensities(self, notnull: tuple) -> dict:
         """Read intensities of labelled voxels.
+
         Parameters
         ----------
-        notnull : tuple
-            Tuple of array indices from which intensities will be collected.
+            notnull : tuple
+                Tuple of array indices from which intensities will be collected.
         """
         with HideLog():
             if self.image.channels is not None:
@@ -230,7 +233,13 @@ class ImageData:
         return intensities
 
     def _test_img_shapes(self) -> None:
-        """Assert that image and label file shapes match."""
+        """Assert that image and label file shapes match.
+
+        Raises
+        ======
+            ShapeMismatchError
+                If the intensity- and label-image do not have same size spatial dimensions.
+        """
         if self.labels is None:
             print("Label data has not been defined.")
             return
@@ -241,26 +250,24 @@ class ImageData:
 
     def labelled_voxels(self, item: Union[int, str, pl.Path] = None) -> Union[pd.DataFrame, None]:
         """Find labelled voxels from a label-file and return them in a DataFrame with intensities.
+
         Parameters
         ----------
-        item : int, str
-            Either a string or pathlib.Path to a label-image or index position in self.label_paths. If value is not
-            given, uses the label-image that is active in self.labels.
-
+            item : int, str
+                Either a string or pathlib.Path to a label-image or index position in self.label_paths. If value is not
+                given, uses the label-image that is active in self.labels.
         Returns
-        -------
-        ret : pd.DataFrame
-            DataFrame with XYZ-coordinates of each voxel, their intensities on each channel of the image, and the voxel
-            value in the label-image (ID).
-
+        =======
+            pd.DataFrame
+                DataFrame with XYZ-coordinates of each voxel, their intensities on each channel of the image, and the
+                voxel value in the label-image (ID).
         Raises
-        ------
-        MissinLabelsError
-            If label-image has no labels.
+        ======
+            MissingLabelsError
+                If label-image has no labels.
         """
         if item is not None:
             self.select(pl.Path(item))
-
         # Find locations of individual label voxels from label image
         try:
             notnull = np.nonzero(self.labels.img)
@@ -273,7 +280,7 @@ class ImageData:
         column_data.update(self._get_intensities(notnull))
         return pd.DataFrame(column_data)
 
-    def select(self, item: Union[int, str, pl.Path]) -> [IndexError]:
+    def select(self, item: Union[int, str, pl.Path]) -> [FileNotFoundError]:
         """Make one of the inputted label files active."""
         if isinstance(item, int):
             item = self.label_paths[item]
@@ -283,38 +290,52 @@ class ImageData:
             raise FileNotFoundError
         self.labels = ImageFile(item, is_label=True)
 
+    def compatible_save(self, labels: np.ndarray, path: Pathlike) -> NoReturn:
+        """Save given label image using metadata from microscopy image.
+
+        Parameters
+        ----------
+            labels : np.ndarray
+                An image array for saving.
+            path : Pathlike
+                The output path of the image.
+        """
+        arr = labels.astype(self.image.dtype)
+        kws = {"imagej": True, "resolution": (1. / self.voxel_dims[1], 1. / self.voxel_dims[2]),
+               "metadata": {'spacing': self.voxel_dims[0]}}
+        save_tiff_imagej_compatible(path, arr, axes=self.image.axes.replace('C', ''), **kws)
+
 
 class ImageFile:
     """Define a microscopy image or label image for analysis.
+
     Attributes
     ----------
-    path : pl.Path
-        Path to the image-file.
-    name : str
-        Name of the image-file without extension.
-    img : np.ndarray
-        The image as a numpy-array.
-    is_label : bool
-        Whether instance is a label-image.
-    label_name : str
-        Last element of name when split by underscore, i.e. model that was used to create label-image. For example, the
-        label-file with name 'sample1_DAPI10x.labels.tif' would have label_name value 'DAPI10x'.
-    shape : tuple[int]
-        Full shape of the image-array.
-    channels : int
-        Number of channels in the image-file.
-    voxel_dims : tuple[float]
-        Tuple with voxel ZYX-sizes in micrometers.
-
+        path : pl.Path
+            Path to the image-file.
+        name : str
+            Name of the image-file without extension.
+        img : np.ndarray
+            The image as a numpy-array.
+        is_label : bool
+            Whether instance is a label-image.
+        label_name : str
+            Last element of name when split by underscore, i.e. model that was used to create label-image. For example,
+            the label-file with name 'sample1_DAPI10x.labels.tif' would have label_name value 'DAPI10x'.
+        shape : tuple[int]
+            Full shape of the image-array.
+        channels : int
+            Number of channels in the image-file.
+        voxel_dims : tuple[float]
+            Tuple with voxel ZYX-sizes in micrometers.
     Methods
     -------
-    get_channels(self, channels: Union[int, Tuple[int]]) -> np.ndarray:
-        Return channels at given indices of the images channel-axis as a numpy array.
-
+        get_channels(self, channels: Union[int, Tuple[int]]) -> np.ndarray:
+            Return channels at given indices of the images channel-axis as a numpy array.
     Raises
-    ------
-    AxesOrderError
-        When axis order differs from the required 'Z(C)YX'.
+    ======
+        AxesOrderError
+            When axis order differs from the required 'Z(C)YX'.
     """
 
     def __init__(self, filepath: Pathlike, is_label: bool = False,
@@ -322,12 +343,12 @@ class ImageFile:
         """
         Parameters
         ----------
-        filepath : str, pl.Path
-            Full path to a image-file.
-        is_label : bool
-            Set to true if given filepath points to a label-image.
-        force_dims : tuple[float]
-            Force voxel ZYX-sizes in micrometers, in respective order. If None, sizes are read from metadata, if found.
+            filepath : str, pl.Path
+                Full path to a image-file.
+            is_label : bool
+                Set to true if given filepath points to a label-image.
+            force_dims : tuple[float]
+                Force voxel ZYX-sizes in micrometers, in respective order. If None, sizes are read from metadata.
         """
         self.path = pl.Path(filepath)
         self.name = self.path.stem
@@ -350,7 +371,7 @@ class ImageFile:
         return img
 
     @img.setter
-    def img(self, path: pl.Path):
+    def img(self, path: pl.Path) -> NoReturn:
         """Set path to image."""
         self._img = path
 
@@ -399,7 +420,7 @@ class ImageFile:
             dims = [z_space] + [v[1]/v[0] for v in (y_res, x_res)]
         self.voxel_dims = tuple(dims)
 
-    def _test_ax_order(self, axes: str):
+    def _test_ax_order(self, axes: str) -> NoReturn:
         """Assert correct order of image axes."""
         if axes in ('CYX', 'YX'):
             self.is_2d = True
@@ -429,51 +450,50 @@ class ImageFile:
 
 class CollectLabelData:
     """Collect information on objects based on microscopy image and predicted labels.
+
     Attributes
     ----------
-    image_data : labelCollect.ImageData
-        An ImageData-instance of the microscopy image.
-    convert_coordinates : bool
-        Whether output will be/is converted from pixel-wise coordinate system to micrometers.
-    label_files : str, pl.Path
-        Outputs a list containing paths to label-images related to the microscopy image.
-    output : labelCollect.OutputData
-        Indexable object that stores the results of the given label-image paths. Results are stored in the same order as
-        in the label_files-attribute.
-
+        image_data : labelCollect.ImageData
+            An ImageData-instance of the microscopy image.
+        convert_coordinates : bool
+            Whether output will be/is converted from pixel-wise coordinate system to micrometers.
+        label_files : str, pl.Path
+            Outputs a list containing paths to label-images related to the microscopy image.
+        output : labelCollect.OutputData
+            Indexable object that stores the results of the given label-image paths. Results are stored in the same
+            order as in the label_files-attribute.
     Methods
     -------
-    get_label_names()
-        Returns the final component of each label-file, i.e. its model or channel identifier.
-    filter(filter_list: list)
-        Apply a filter to data from one/all model(s).
-    read_labels(label_file = None)
-        Collect label info from label-images. Reads only label_file if it is given, else collects data from all files in
-        self.label_files.
-    save(out_path, item = 0, label_name = None, lam_compatible = True, decimal_precision = 4)
+        get_label_names()
+            Returns the final component of each label-file, i.e. its model or channel identifier.
+        filter(filter_list: list)
+            Apply a filter to data from one/all model(s).
+        read_labels(label_file = None)
+            Collect label info from label-images. Reads only label_file if it is given, else collects data from all
+            files in self.label_files.
+        save(out_path, item = 0, label_name = None, lam_compatible = True, decimal_precision = 4)
     """
 
     def __init__(self, image_data: ImageData, label_file: Pathlike = None, label_names: list = None,
-                 convert_to_micron: bool = True) -> None:
+                 convert_to_micron: bool = True) -> NoReturn:
         """
         Parameters
         ----------
-        image_data : labelCollect.ImageData
-            An ImageData-instance of the microscopy image to use for label info collection.
-        label_file : str, pl.Path
-            Path to a specific label-image from which to collect information. If None, all label paths from image_data
-            are used.
-        label_names : list[str]
-            Give alternative names to the labels.
-        convert_to_micron : bool
-            Convert output data from pixel-based dimensions to micrometers.
-
+            image_data : labelCollect.ImageData
+                An ImageData-instance of the microscopy image to use for label info collection.
+            label_file : str, pl.Path
+                Path to a specific label-image from which to collect information. If None, all label paths from
+                image_data are used.
+            label_names : list[str]
+                Give alternative names to the labels.
+            convert_to_micron : bool
+                Convert output data from pixel-based dimensions to micrometers.
         Raises
-        ------
-        AssertionError
-            If given label_names-list is not equal in length to ImageData.label_files.
-        MissingLabelsError
-            When trying to read an image with no labels.
+        ======
+            AssertionError
+                If given label_names-list is not equal in length to ImageData.label_files.
+            MissingLabelsError
+                When trying to read an image with no labels.
         """
         self.image_data = image_data
         self.convert_coordinates = convert_to_micron
@@ -482,17 +502,16 @@ class CollectLabelData:
         assert len(self.label_files) == len(names)
         self.output = OutputData(self.label_files, names)
 
-    def __call__(self, save_data: bool = False, out_path: Pathlike = None, filters: list = None, *args,
-                 **kwargs):
+    def __call__(self, save_data: bool = False, out_path: Pathlike = None, filters: list = None, *args, **kwargs):
         """Read all label image-files and save label-specific information.
         Parameters
         ----------
-        save_data : bool
-            Whether to save the collected data as a file. The data is stored to self.output in any case.
-        out_path : str, pl.Path
-            Path to the save folder if save_data is True.
-        filters : list
-            List of tuples containing filters to apply. See CollectLabelData.filter().
+            save_data : bool
+                Whether to save the collected data as a file. The data is stored to self.output in any case.
+            out_path : str, pl.Path
+                Path to the save folder if save_data is True.
+            filters : list
+                List of tuples containing filters to apply. See CollectLabelData.filter().
         """
         if save_data and out_path is None:
             print("CollectLabelData.__call__() requires path to output-folder (out_path: str, pathlib.Path).")
@@ -501,7 +520,8 @@ class CollectLabelData:
         for ind, label_file in enumerate(self.label_files):
             self.read_labels(label_file=label_file)
         if filters is not None:
-            self.filter(filters)
+            filtered = self.filter(filters)
+            self.filter_label_images(filtered)
         if save_data:
             for ind in range(len(self.label_files)):
                 self.save(out_path, item=ind, *args, **kwargs)
@@ -519,21 +539,24 @@ class CollectLabelData:
             return grouped_voxels.size() * np.nan
         return grouped_voxels.size() * np.prod(self.image_data.voxel_dims)
 
-    def filter(self, filter_list: list) -> None:
+    def filter(self, filter_list: list) -> dict:
         """Filter an output DataFrame based on each label's value in given column.
         Parameters
         ----------
-        filter_list : list
-            List containing a tuple for each filter. Each tuple must contain 1) index of data or name/model, 2) name of
-            column where filter is applied, 3) filtering value, and 4) 'min' or 'max' to indicate if filtering value is
-            the minimum or maximum allowed value in the data column. If the first item in tuple is 'all', the filter is
-            performed on all output DataFrames.
-            For example, filter_list = [('all', 'Area', 5.0, 'min'), ('DAPI10x', 'Volume', 750.0, 'max')] would filter
-            all labels with area less than 5, and would additionally filter labels with volume more than 750 from the
-            DAPI10x information.
+            filter_list : list
+                List containing a tuple for each filter. Each tuple must contain 1) index of data or name/model, 2) name
+                of column for filtering, 3) threshold value, and 4) 'min' or 'max' to set direction of filtering. If the
+                first item in tuple is 'all', the filter is performed on all output DataFrames.
+                For example, filter_list = [('all', 'Area', 5.0, 'min'), ('DAPI10x', 'Volume', 750.0, 'max')] would
+                filter all labels with area less than 5, and would additionally filter labels with volume more than 750
+                from the DAPI10x information.
+        Returns
+        =======
+            filtered : dict
+                Contains the sets of filtered IDs for each item in self.output, named after index positions.
         """
-        def __resolve_targets() -> List[int]:
-            targets = []
+        def __resolve_targets() -> List:
+            target_list = []
             for filter_tuple in filter_list:
                 fail_message = f"Filtering with {filter_tuple} failed"
                 items, name = None, filter_tuple[0]
@@ -548,43 +571,44 @@ class CollectLabelData:
                 elif isinstance(name, int):
                     if len(self.label_files) < name + 1:
                         warn(f"{fail_message} - Index {name} is too large for object of length " +
-                              f"{len(self.get_label_names())}.\n")
-                        continue
+                             f"{len(self.get_label_names())}.\n")
                     items = [name]
-                targets.append(items)
-            return targets
+                target_list.append(items)
+            return target_list
 
         def __use_filter(ids):
             return target in ids
 
-        filtered_ids = []
+        filtered = {}
         # Resolve targets for each filter:
         targets = __resolve_targets()
         # Apply filters for each target
-        for target in range(len(self.label_files)):
-            filters = map(__use_filter, targets)
+        for item in range(len(self.label_files)):
+            dropped_ids = set()  # Variable stores IDs of dropped labels
+            filters = [filter_list[i] for i, b in enumerate(map(__use_filter, targets)) if b is True]
+            for flt in filters:
+                ids = self.output.filter_output(index=item, column=flt[1], value=flt[2], filter_type=flt[3])
+                dropped_ids = dropped_ids.union(ids)
+            filtered[item] = dropped_ids
+        return filtered
 
-        # TODO: Add filtering
-        #     if items is not None and len(items) > 0:
-        #         for item in items:
-        #             filtered = self.output.filter_output(index=item, column=filter_tuple[1], value=filter_tuple[2],
-        #                                                  filter_type=filter_tuple[3])
-        #             filtered_ids.append
-        #         if isinstance(filtered, set) and len(filtered) > 0:
-
+    def filter_label_images(self, filtered):
+        # map(filtered.__getitem__, filtered.keys())
+        # indices = filtered.keys()
+        pass
 
     def gather_data(self, label_file: Pathlike) -> Union[pd.DataFrame, None]:
         """Get output DataFrame containing descriptive values of the labels.
         Parameters
         ----------
-        label_file : str, pl.Path
-            Path to label-image from which label info will be collected from.
+            label_file : str, pl.Path
+                Path to label-image from which label info will be collected from.
 
         Returns
         -------
-        output : pd.DataFrame
-            DataFrame with voxel values of each label collapsed into wide-format observations, i.e. each row represents
-            one object.
+            output : pd.DataFrame
+                DataFrame with voxel values of each label collapsed into wide-format observations, i.e. each row
+                represents one object.
         """
         def __intensity_slope(yaxis: pd.Series, xaxis: pd.Series) -> float:
             xaxis = xaxis.iloc(axis=0)[yaxis.index.min():yaxis.index.max() + 1]
@@ -665,17 +689,17 @@ class CollectLabelData:
 
         Parameters
         ----------
-        out_path : str, pl.Path
-            Path to save directory.
-        item : int, str, pl.Path, pd.DataFrame
-            Index in self.output or corresponding label-image path. Alternatively, can be directly provided with the
-            DataFrame.
-        label_name : str
-            Alternative name to the label. If None, uses the model's name.
-        lam_compatible : bool
-            If True, changes column names to be LAM-compatible.
-        decimal_precision : int, bool
-            Precision of decimals in the saved file.
+            out_path : str, pl.Path
+                Path to save directory.
+            item : int, str, pl.Path, pd.DataFrame
+                Index in self.output or corresponding label-image path. Alternatively, can be directly provided with the
+                DataFrame.
+            label_name : str
+                Alternative name to the label. If None, uses the model's name.
+            lam_compatible : bool
+                If True, changes column names to be LAM-compatible.
+            decimal_precision : int, bool
+                Precision of decimals in the saved file.
         """
         def _is_empty(obj):
             if obj is None: return True
@@ -717,15 +741,15 @@ class CollectLabelData:
 
 class OutputData:
     """Hold label name, file, and data of output.
+
     Methods
     -------
-    lamify(label_ind: int = 0) -> Union[None, pd.DataFrame]
-        Return output data at given index as DataFrame with LAM-compatible column names.
-
+        lamify(label_ind: int = 0) -> Union[None, pd.DataFrame]
+            Return output data at given index as DataFrame with LAM-compatible column names.
     Raises
-    ------
-    AssertionError
-        If length of label_paths and label_names does not match.
+    ======
+        AssertionError
+            If length of label_paths and label_names does not match.
     """
 
     def __init__(self, label_paths: List[Pathlike], label_names: Optional[List[str]] = None) -> None:
@@ -755,19 +779,20 @@ class OutputData:
             print(f"Output data not found for {self._label_files[item]}.")
         return self._label_names[item], str(self._label_files[item]), self._output[item]
 
-    def filter_output(self, index: int, column: str, value: float, filter_type: str) -> Union[Set[int], None]:
+    def filter_output(self, index: int, column: str, value: float, filter_type: str) -> Set[int]:
         """Filter an output DataFrame based on each label's value in given column.
+
         Parameters
         ----------
-        index : int
-            Index position of the label file in self.output.
-        column : str
-            Column label to use in filtering.
-        value : float
-            Value to use as a filtering limit.
-        filter_type : str
-            Direction of filtering. Use 'min' to filter all labels with value lower than the one given, or 'max' to
-            filter all labels with higher value.
+            index : int
+                Index position of the label file in self.output.
+            column : str
+                Column label to use in filtering.
+            value : float
+                Value to use as a filtering limit.
+            filter_type : str
+                Direction of filtering. Use 'min' to filter all labels with value lower than the one given, or 'max' to
+                filter all labels with higher value.
         """
         output_data = self._output[index]
         if not isinstance(output_data, pd.DataFrame):
@@ -776,7 +801,7 @@ class OutputData:
             else:
                 message = f"Object at index '{index}' is not a DataFrame."
             print(f"Filter failed - {message}\n")
-            return None
+            return set()
 
         try:
             if filter_type == 'min':
@@ -785,7 +810,7 @@ class OutputData:
                 filtered_output = output_data.loc[output_data.loc[:, column] <= value, :]
             else:
                 warn("Filter failed - Type must be either 'min' or 'max'.")
-                return
+                return set()
             self._output[index] = filtered_output
             return set(output_data.index).difference(set(filtered_output.index))
         except IndexError:
@@ -805,26 +830,25 @@ class PredictObjects:
 
     Attributes
     ----------
-    PredictObjects.model_instances : dict[str, Union[StarDist2D, StarDist3D]]
-        Contains model instances that have been generated.
-    PredictObjects.default_config : Union[dict, predictSD.PredictionConfig]
-        Contains default kwargs for handling StarDist prediction.
-    name : str
-        The name of the image-file.
-    image : labelCollect.ImageFile
-        ImageFile-object pointing to the image to segment.
-    label_paths : Optional[List[str, ...]]
-        A path or list of paths to all label-files.
-    config : dict
-        Updated version of default_config for prediction with class instance.
-
+        PredictObjects.model_instances : dict[str, Union[StarDist2D, StarDist3D]]
+            Contains model instances that have been generated.
+        PredictObjects.default_config : Union[dict, predictSD.PredictionConfig]
+            Contains default kwargs for handling StarDist prediction.
+        name : str
+            The name of the image-file.
+        image : labelCollect.ImageFile
+            ImageFile-object pointing to the image to segment.
+        label_paths : Optional[List[str, ...]]
+            A path or list of paths to all label-files.
+        config : dict
+            Updated version of default_config for prediction with class instance.
     Methods
     -------
-    predict(model_and_ch_nro, out_path, make_overlay=True, n_tiles=None, overlay_path=None) -> Tuple[np.ndarray, dict]
-        Performs StarDist prediction on one model to the image.
-    define_tiles(self, dims) -> tuple
-        Returns a tuple of tile numbers on each axis of image based on keys "z_div", "long_div", and "short_div" in
-        PredictObjects.default_config or in kwargs.
+        predict(model_and_ch_nro, out_path, n_tiles=None, overlay_path=None) -> Tuple[np.ndarray, dict]
+            Performs StarDist prediction on one model to the image.
+        define_tiles(self, dims) -> tuple
+            Returns a tuple of tile numbers on each axis of image based on keys "z_div", "long_div", and "short_div" in
+            PredictObjects.default_config or in kwargs.
     """
     model_instances = {}
     default_config = { "sd_models": None, "prediction_chs": 0, "predict_big": False,
@@ -836,12 +860,12 @@ class PredictObjects:
         """
         Parameters
         ----------
-        images : labelCollect.ImageData
-            ImageData-object that contains data regarding one microscopy image that will be used for prediction
-        prediction_config : dict
-            Is used to update PredictObjects.default_config to change prediction settings.
-        mdir : str, pathlib.Path
-            Path to the model directory.
+            images : labelCollect.ImageData
+                ImageData-object that contains data regarding one microscopy image that will be used for prediction
+            prediction_config : dict
+                Is used to update PredictObjects.default_config to change prediction settings.
+            mdir : str, pathlib.Path
+                Path to the model directory.
         """
         self.name = images.name
         self.image = images.image
@@ -857,19 +881,18 @@ class PredictObjects:
 
         Parameters
         ----------
-        out_path : str
-            Path to save label images to.
-        return_details : bool
-            Whether to return polygon/polyhedra details produced by StarDist
-        overwrite : bool
-            Whether to perform prediction on model(s) with pre-existing labels and to overwrite them. Tests if default
-            pattern of "{out_path}/{self.name}_{model}.labels.tif exists in self.label_paths.
-
+            out_path : str
+                Path to save label images to.
+            return_details : bool
+                Whether to return polygon/polyhedra details produced by StarDist
+            overwrite : bool
+                Perform prediction on model(s) with pre-existing labels and to overwrite them. Tests if default pattern
+                of "{out_path}/{self.name}_{model}.labels.tif exists in self.label_paths.
         Returns
-        -------
-        out_details : dict
-            When return_details is True, returns dict that ontains information such as coordinates of the remaining
-            StarDist label predictions, otherwise returns None.
+        =======
+            out_details : dict
+                When return_details is True, returns dict that ontains information such as coordinates of the remaining
+                StarDist label predictions, otherwise returns None.
         """
         dout = self.config.get('return_details') if 'return_details' in self.config.keys() else return_details
         out_details = dict()
@@ -962,26 +985,26 @@ class PredictObjects:
                 n_tiles: Optional[Tuple[int, ...]] = None, overlay_path: Optional[str] = None,
                 **kwargs) -> Tuple[np.ndarray, dict]:
         """Perform a prediction to one image.
+
         Parameters
         ----------
-        model_and_ch_nro : tuple
-            Tuple of (str, int) that first has name of model and then the index for the channel the model is applied to. 
-        out_path : str
-            Path to the label file output directory.
-        make_overlay : bool
-            Whether to create a flattened overlay image of
-        n_tiles : [None, tuple]
-            Tuple that contains number of tiles for each axis. If None, number of tiles is defined from Class-attribute
-            default_config or from kwargs.
-        overlay_path : str
-            Path where overlay image is saved to if created.
-
+            model_and_ch_nro : tuple
+                Tuple of (str, int) that has name of model and then the index for the channel the model is applied to.
+            out_path : str
+                Path to the label file output directory.
+            make_overlay : bool
+                Whether to create a flattened overlay image of
+            n_tiles : [None, tuple]
+                Tuple with number of tiles for each axis. If None, number of tiles is defined from Class-attribute
+                default_config or from kwargs.
+            overlay_path : str
+                Path where overlay image is saved to if created.
         Returns
-        -------
-        labels : np.ndarray
-            Image of the labels.
-        details : dict
-            Descriptions of label polygons/polyhedra.
+        =======
+            labels : np.ndarray
+                Image of the labels.
+            details : dict
+                Descriptions of label polygons/polyhedra.
         """
         config = deepcopy(self.config)
         config.update(kwargs)
@@ -1032,17 +1055,16 @@ class PredictObjects:
 
     def define_tiles(self, dims: Tuple[int, int, int]) -> Tuple[int, int, int]:
         """Define ZYX order of image divisors using division values from config.
+
         Parameters
         ----------
-        dims : Tuple[int, int, int]
-            Tuple of image shape on Z, Y, X-axes, respectively.
-
+            dims : Tuple[int, int, int]
+                Tuple of image shape on Z, Y, X-axes, respectively.
         Returns
-        -------
-        Tuple[int, int, int]
-            Tuple of number of tiles for each axis, ordered ZYX.
+        =======
+            Tuple[int, int, int]
+                Tuple with number of tiles for each axis, ordered ZYX.
         """
-
         # Image shape
         y, x = dims[-2], dims[-1]
         # return splitting counts of each axis:
@@ -1068,7 +1090,6 @@ class PredictObjects:
 
 class HidePrint:
     """Hide output from other packages."""
-
     def __enter__(self):
         self._original_stdout = sys.stdout
         sys.stdout = open(os.devnull, 'w')
@@ -1080,7 +1101,6 @@ class HidePrint:
 
 class HideLog:
     """Hide logging output from other packages."""
-
     def __enter__(self, level: int = 30):
         captureWarnings(True), disable(level)
 
@@ -1090,7 +1110,6 @@ class HideLog:
 
 class ShapeMismatchError(Exception):
     """Exception raised when size-restricted objects differing shapes."""
-
     def __init__(self, objname: str, message=f"Shape mismatch between images"):
         self.name = objname
         self.message = message
@@ -1102,7 +1121,6 @@ class ShapeMismatchError(Exception):
 
 class MissingLabelsError(Exception):
     """Exception raised when trying to get a non-defined label image."""
-
     def __init__(self, image_name: str, message=f"Label file not defined"):
         self.name = image_name
         self.message = message
@@ -1114,7 +1132,6 @@ class MissingLabelsError(Exception):
 
 class AxesOrderError(Exception):
     """Exception raised when image has wrong axis order."""
-
     def __init__(self, image_name: str, message=f"Image axes order is wrong; ZCYX is required."):
         self.name = image_name
         self.message = message
@@ -1146,23 +1163,21 @@ def create_output_dirs(out_path: Pathlike, lbl_path: Pathlike) -> None:
     """Create result and label-file directories.
     Parameters
     ----------
-    out_path : str, pl.Path
-        Path to output-directory.
-    lbl_path : str, pl.Path
-        Path to label-image directory.
+        out_path : str, pl.Path
+            Path to output-directory.
+        lbl_path : str, pl.Path
+            Path to label-image directory.
     """
     if not isinstance(out_path, pl.Path) or not isinstance(lbl_path, pl.Path):
         out_path = pl.Path(out_path)
         lbl_path = pl.Path(lbl_path)
-
     if not out_path.exists():
         out_path.mkdir(exist_ok=True, parents=True)
     if not lbl_path.exists():
         lbl_path.mkdir(exist_ok=True, parents=True)
 
 
-def read_model(model_func: Type[Union[StarDist3D, StarDist2D]], model_name: str, model_path: str) -> Union[StarDist3D,
-                                                                                                           StarDist2D]:
+def read_model(model_func: Type[Model], model_name: str, model_path: str) -> Model:
     """Read 3D or 2D StarDist model."""
     # with HidePrint():
     try:
@@ -1171,8 +1186,7 @@ def read_model(model_func: Type[Union[StarDist3D, StarDist2D]], model_name: str,
         if str(err).startswith("grid = ("):
             raise ShapeMismatchError(objname=model_name, message="Dimensions of model and image differ.")
         else: raise
-    else:
-        return model
+    else: return model
 
 
 def overlay_images(save_path: Pathlike, path_to_image: Pathlike,
@@ -1183,25 +1197,25 @@ def overlay_images(save_path: Pathlike, path_to_image: Pathlike,
             try:
                 next(lut_dir.glob(f'{item}.lut'))
                 return lut_dict.get(item)
-            except StopIteration:
-                continue
+            except StopIteration: continue
         return "Green"
+
+    def _files_exist(flag = 0):
+        if not pl.Path(imagej_path).exists():
+            warn("Path to ImageJ run-file is incorrect. Overlay-plots will not be created.")
+            flag += 1
+        if not macro_file.exists():
+            warn("Label overlay plotting requires macro file 'overlayLabels.ijm'")
+            flag += 1
+        return flag == 0
 
     # Create output-directory
     pl.Path(save_path).parent.mkdir(exist_ok=True)
-
     # Find path to predictSD's ImageJ macro for the overlay image creation:
     file_dir = pl.Path(__file__).parent.absolute()
     macro_file = file_dir.joinpath("overlayLabels.ijm")
-
-    # Test that required files exist:
-    if not pl.Path(imagej_path).exists():
-        warn("Path to ImageJ run-file is incorrect. Overlay-plots will not be created.")
-        return
-    if not macro_file.exists():
-        warn("Label overlay plotting requires macro file 'overlayLabels.ijm'")
-        return
-
+    # Test that ImageJ and macro-file are found
+    if not _files_exist(): return
     # Parse run command and arguments:
     luts = {'glasbey_inverted': 'glasbey_inverted', '16_colors': '16_colors', '16_Colors': '16 Colors'}
     lut_name = _find_lut(pl.Path(imagej_path).parent.joinpath("luts"), luts)
@@ -1211,13 +1225,11 @@ def overlay_images(save_path: Pathlike, path_to_image: Pathlike,
     ps = subprocess.Popen(
         # fiji_cmd,
         [str(imagej_path), "--headless", "-macro", str(macro_file), f'{input_args}'],
-        shell=False, stdout=subprocess.PIPE
-    )
+        shell=False, stdout=subprocess.PIPE)
     try:
         outs, errs = ps.communicate(timeout=20)
         # ps = subprocess.run(fiji_cmd, shell=True, check=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, timeout=10)
-    except subprocess.CalledProcessError as e:
-        warn(e.stderr)
+    except subprocess.CalledProcessError as e: warn(e.stderr)
     except subprocess.TimeoutExpired:
         warn("Overlay-subprocess timeout!\nSubprocess may require ImageJ to be open!\n")
         ps.kill()
@@ -1225,26 +1237,28 @@ def overlay_images(save_path: Pathlike, path_to_image: Pathlike,
 
 
 def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf: dict = None, lam_out: bool = True,
-                   to_microns: bool = True, voxel_dims: Union[None, tuple] = None, labels_exist: bool = False) -> None:
+                   to_microns: bool = True, voxel_dims: Union[None, tuple] = None, labels_exist: bool = False)\
+        -> NoReturn:
     """Perform analysis on all images in given directory.
+
     Parameters
     ----------
-    img_path: str
-        Path to image-folder. All TIFF-images in folder will be used.
-    lbl_path: str
-        Path to label-folder. When labels_exist==True, label-files in the folder will be used to collect label-specific
-        information, otherwise label-files will be saved to the folder.
-    out_path: str
-        Path to results-folder. Data tables of label information will be saved here.
-    prediction_conf: dict
-        Key/value-pairs to replace PredictObjects.default_config -values that are used for StarDist prediction.
-    to_microns: bool
-        Whether to transform output from pixel coordinate system to micrometers.
-    voxel_dims: None, tuple
-        Tuple with ZYX-dimensions of each pixel in order to perform transformation to micrometers.
-    labels_exist: bool
-        Whether labels already exist in lbl_path. If True, the function only collects label information from the files,
-        otherwise StarDist prediction is performed before the collection.
+        img_path: str
+            Path to image-folder. All TIFF-images in folder will be used.
+        lbl_path: str
+            Path to label-folder. When labels_exist==True, label-files in the folder will be used to collect label-
+            specific information, otherwise label-files will be saved to the folder.
+        out_path: str
+            Path to results-folder. Data tables of label information will be saved here.
+        prediction_conf: dict
+            Key/value-pairs to replace PredictObjects.default_config -values that are used for StarDist prediction.
+        to_microns: bool
+            Whether to transform output from pixel coordinate system to micrometers.
+        voxel_dims: None, tuple
+            Tuple with ZYX-dimensions of each pixel in order to perform transformation to micrometers.
+        labels_exist: bool
+            Whether labels already exist in lbl_path. If True, the function only collects label information from the
+            files, otherwise StarDist prediction is performed before the collection.
     """
     dim_warning = dict()
     # Create output directories
@@ -1252,8 +1266,7 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
 
     # Find all tif or tiff files in the directory
     files = [p for p in [*pl.Path(img_path).glob(f'*')] if p.suffix in ['.tif', '.tiff']]
-    if not files:
-        warn(f"UserWarning: No image files found at path {img_path}")
+    if not files: warn(f"UserWarning: No image files found at path {img_path}")
 
     # Perform the analysis on the images in alphabetical order:
     for image_file in files:
@@ -1262,14 +1275,12 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
         if labels_exist:  # Find path to label images if existing
             label_files = corresponding_imgs(pl.Path(image_file).stem, lbl_path)
             print(f"Using pre-existing label files:\n{label_files}")
-        else:
-            label_files = None
+        else: label_files = None
 
         try:  # Assign image/label object, read metadata
             images = ImageData(image_file, paths_to_labels=label_files, voxel_dims=voxel_dims)
             dim_warning.update({images.name: all([v==1 for v in images.voxel_dims])})
-        except ShapeMismatchError:
-            raise
+        except ShapeMismatchError: raise
             # continue  # TODO: supposed to be raise?
 
         # Prediction:
