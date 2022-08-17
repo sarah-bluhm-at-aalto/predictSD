@@ -10,7 +10,7 @@ import subprocess
 import sys
 from copy import deepcopy
 from logging import NOTSET, disable, captureWarnings
-from typing import Union, Tuple, List, Optional, Type, Set, NoReturn  # TypedDict
+from typing import Union, Tuple, List, Optional, Type, Set, NoReturn, Dict  # TypedDict
 from warnings import warn
 
 import numpy as np
@@ -290,21 +290,6 @@ class ImageData:
             raise FileNotFoundError
         self.labels = ImageFile(item, is_label=True)
 
-    def compatible_save(self, labels: np.ndarray, path: Pathlike) -> NoReturn:
-        """Save given label image using metadata from microscopy image.
-
-        Parameters
-        ----------
-            labels : np.ndarray
-                An image array for saving.
-            path : Pathlike
-                The output path of the image.
-        """
-        arr = labels.astype(self.image.dtype)
-        kws = {"imagej": True, "resolution": (1. / self.voxel_dims[1], 1. / self.voxel_dims[2]),
-               "metadata": {'spacing': self.voxel_dims[0]}}
-        save_tiff_imagej_compatible(path, arr, axes=self.image.axes.replace('C', ''), **kws)
-
 
 class ImageFile:
     """Define a microscopy image or label image for analysis.
@@ -447,6 +432,21 @@ class ImageFile:
         print("Image is single-channel.")
         return self.img
 
+    def compatible_save(self, labels: np.ndarray, path: Pathlike) -> NoReturn:
+        """Save given label image using metadata from microscopy image.
+
+        Parameters
+        ----------
+            labels : np.ndarray
+                An image array for saving.
+            path : Pathlike
+                The output path of the image.
+        """
+        arr = labels.astype(self.dtype)
+        kws = {"imagej": True, "resolution": (1. / self.voxel_dims[1], 1. / self.voxel_dims[2]),
+               "metadata": {'spacing': self.voxel_dims[0]}}
+        save_tiff_imagej_compatible(path, arr, axes=self.axes.replace('C', ''), **kws)
+
 
 class CollectLabelData:
     """Collect information on objects based on microscopy image and predicted labels.
@@ -521,7 +521,7 @@ class CollectLabelData:
             self.read_labels(label_file=label_file)
         if filters is not None:
             filtered = self.filter(filters)
-            self.filter_label_images(filtered)
+            self.mask_labels(filtered)
         if save_data:
             for ind in range(len(self.label_files)):
                 self.save(out_path, item=ind, *args, **kwargs)
@@ -577,7 +577,8 @@ class CollectLabelData:
             return target_list
 
         def __use_filter(ids):
-            return target in ids
+            """Determine if an item belongs to the given targets of a filter."""
+            return item in ids
 
         filtered = {}
         # Resolve targets for each filter:
@@ -592,23 +593,44 @@ class CollectLabelData:
             filtered[item] = dropped_ids
         return filtered
 
-    def filter_label_images(self, filtered):
-        # map(filtered.__getitem__, filtered.keys())
-        # indices = filtered.keys()
-        pass
+    def mask_labels(self, filtered: Dict[int, Union[set, list]], overwrite: bool = False) -> NoReturn:
+        """Mask given labels from existing label-files.
+
+        Parameters
+        ----------
+            filtered : dict(int, set)
+                A dictionary containing self.label_files indices as dict keys and respective label IDs to remove as
+                values. E.g., filtered = {0: {1,2,5}, 1: {6}}
+            overwrite : bool
+                Whether to overwrite the unfiltered label image.
+        """
+        for item, ids, in filtered.items():
+            if len(ids) == 0:
+                continue
+            self.image_data.select(item)
+            labels = self.image_data.labels.img
+            labels[np.isin(labels, list(ids))] = 0
+            if overwrite:
+                path = pl.Path(self.image_data.label_paths[item])
+            else:
+                file = pl.Path(self.image_data.label_paths[item])
+                directory, name = file.parent, file.name
+                path = pl.Path(directory, "filtered", name)
+                path.parent.mkdir(exist_ok=True)
+                self.image_data.label_paths[item] = str(path)
+            self.image_data.image.compatible_save(labels, path)
 
     def gather_data(self, label_file: Pathlike) -> Union[pd.DataFrame, None]:
         """Get output DataFrame containing descriptive values of the labels.
+
         Parameters
         ----------
             label_file : str, pl.Path
                 Path to label-image from which label info will be collected from.
-
         Returns
-        -------
+        =======
             output : pd.DataFrame
-                DataFrame with voxel values of each label collapsed into wide-format observations, i.e. each row
-                represents one object.
+                DataFrame with voxel values of each label collapsed into wide-format.
         """
         def __intensity_slope(yaxis: pd.Series, xaxis: pd.Series) -> float:
             xaxis = xaxis.iloc(axis=0)[yaxis.index.min():yaxis.index.max() + 1]
@@ -1024,24 +1046,18 @@ class PredictObjects:
         # Define tile number if big image
         if config.get("predict_big") and n_tiles is None:
             n_tiles = self.define_tiles(img.shape)
-
         if n_tiles is not None and self.image.is_2d and len(n_tiles) > 2:
             n_tiles = [n_tiles[-2], n_tiles[-1]]
 
-        # Run prediction
+        # Run prediction and fill holes
         labels, details = self._prediction(self.use_model(model_name), img, n_tiles, config)
-
-        # Fill holes in labels
         if config.get("fill_holes") is True:
             labels = fill_label_holes(labels)
 
-        # Define save paths:
+        # Define save paths and save the labels:
         file_stem = f'{self.name}_{model_name}'
         save_label = pl.Path(out_path).joinpath(f'{file_stem}.labels.tif')
-
-        # Save the label image:
-        self.saveastiff(str(save_label), labels)
-        # Add path to label paths
+        self.image.compatible_save(labels, str(save_label))
         if save_label not in self.label_paths:
             self.label_paths.append(str(save_label))
 
@@ -1079,13 +1095,6 @@ class PredictObjects:
         label_file = str(pl.Path(out_path).joinpath(f'{file_stem}.labels.tif'))
         labels = [str(p) for p in self.label_paths]
         return label_file in labels
-
-    def saveastiff(self, savepath, labels):
-        save_tiff_imagej_compatible(savepath, labels.astype(self.image.dtype),
-                                    axes=self.image.axes.replace('C', ''),
-                                    **{"imagej": True,
-                                       "resolution": (1. / self.image.voxel_dims[1], 1. / self.image.voxel_dims[2]),
-                                       "metadata": {'spacing': self.image.voxel_dims[0]}})
 
 
 class HidePrint:
