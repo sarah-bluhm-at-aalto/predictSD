@@ -184,7 +184,6 @@ class ImageData:
             'active' label-image at a time. The active label-image can be changed with class method select().
         voxel_dims : tuple[float]
             Voxel ZYX-dimensions of the image in microns.
-
     Methods
     -------
         labelled_voxels(self, item: Union[int, str] = None) -> Union[pd.DataFrame, None]
@@ -286,7 +285,7 @@ class ImageData:
             item = self.label_paths[item]
         elif isinstance(item, str):
             item = self.label_paths[[str(p) for p in self.label_paths].index(item)]
-        if not item.exists():
+        if not pl.Path(item).exists():
             raise FileNotFoundError
         self.labels = ImageFile(item, is_label=True)
 
@@ -317,6 +316,8 @@ class ImageFile:
     -------
         get_channels(self, channels: Union[int, Tuple[int]]) -> np.ndarray:
             Return channels at given indices of the images channel-axis as a numpy array.
+        compatible_save(self, labels: np.ndarray, path: Pathlike) -> NoReturn:
+            Save given label image using metadata from microscopy image.
     Raises
     ======
         AxesOrderError
@@ -593,33 +594,6 @@ class CollectLabelData:
             filtered[item] = dropped_ids
         return filtered
 
-    def mask_labels(self, filtered: Dict[int, Union[set, list]], overwrite: bool = False) -> NoReturn:
-        """Mask given labels from existing label-files.
-
-        Parameters
-        ----------
-            filtered : dict(int, set)
-                A dictionary containing self.label_files indices as dict keys and respective label IDs to remove as
-                values. E.g., filtered = {0: {1,2,5}, 1: {6}}
-            overwrite : bool
-                Whether to overwrite the unfiltered label image.
-        """
-        for item, ids, in filtered.items():
-            if len(ids) == 0:
-                continue
-            self.image_data.select(item)
-            labels = self.image_data.labels.img
-            labels[np.isin(labels, list(ids))] = 0
-            if overwrite:
-                path = pl.Path(self.image_data.label_paths[item])
-            else:
-                file = pl.Path(self.image_data.label_paths[item])
-                directory, name = file.parent, file.name
-                path = pl.Path(directory, "filtered", name)
-                path.parent.mkdir(exist_ok=True)
-                self.image_data.label_paths[item] = str(path)
-            self.image_data.image.compatible_save(labels, path)
-
     def gather_data(self, label_file: Pathlike) -> Union[pd.DataFrame, None]:
         """Get output DataFrame containing descriptive values of the labels.
 
@@ -665,31 +639,60 @@ class CollectLabelData:
             Volume      = self._get_volumes(voxel_data.loc[:, ['ID'] + list(colmp.keys())]),
             Area        = self._get_area_maximums(voxel_data)
         )
-
         # Find distance to each voxel from its' label's centroid (for intensity slope)
         coords = voxel_sorted.loc[:, ['ID', *colmp.keys()]].groupby("ID")
         pxl_distance = np.sqrt(coords.transform(lambda x: (x - x.mean(skipna=True))**2).sum(axis=1))
 
         # Get intensities and calculate related variables for all image channels
         intensities = voxel_sorted.loc[:, voxel_sorted.columns.difference(['X', 'Y', 'Z'])].groupby("ID")
-        output = output.join([
-            # Intensity minimum value
+        output = output.join([  # Intensity min, max, median, sdev, slope
             intensities.agg(np.nanmin).rename(lambda x: x.replace("Mean", "Min"), axis=1),
-            # Intensity maximum value
             intensities.agg(np.nanmax).rename(lambda x: x.replace("Mean", "Max"), axis=1),
-            # Intensity median
             intensities.agg(np.nanmedian).rename(lambda x: x.replace("Mean", "Median"), axis=1),
-            # Intensity standard deviation
             intensities.agg(np.nanstd).rename(lambda x: x.replace("Mean", "StdDev"), axis=1),
-            # slope of normalized label intensities as a function of distance from centroid
             intensities.agg(lambda yax, xax=pxl_distance: __intensity_slope(yax, xax)
-                            ).rename(lambda x: x.replace("Mean", "Slope"), axis=1)]
-        )
+                            ).rename(lambda x: x.replace("Mean", "Slope"), axis=1)])
         return output
 
     def get_label_names(self):
         """Get label names of all label files defined for the instance."""
         return [ImageFile(p, is_label=True).label_name for p in self.label_files]
+
+    def mask_labels(self, filtered: Dict[int, Union[set, list]], overwrite: bool = False) -> NoReturn:
+        """Mask given labels from existing label-files.
+
+        Parameters
+        ----------
+            filtered : dict(int, set)
+                A dictionary containing self.label_files indices as dict keys and respective label IDs to remove as
+                values. E.g., filtered = {0: {1,2,5}, 1: {6}}
+            overwrite : bool
+                Whether to overwrite the unfiltered label image.
+        """
+        for item, ids, in filtered.items():
+            if len(ids) == 0:
+                continue
+            self.image_data.select(item)
+            labels = self.image_data.labels.img
+            labels[np.isin(labels, list(ids))] = 0
+            if overwrite:
+                path = pl.Path(self.image_data.label_paths[item])
+            else:
+                file = pl.Path(self.image_data.label_paths[item])
+                directory, name = file.parent, file.name
+                path = pl.Path(directory, "filtered", name)
+                path.parent.mkdir(exist_ok=True)
+                self.image_data.label_paths[item] = path
+            self.image_data.image.compatible_save(labels, path)
+
+    def create_overlays(self, savedir: Pathlike, ijpath: Pathlike, channels: List[int]):
+        print("Creating overlays.")
+        if len(channels) != len(self.label_files):
+            warn("Number of assigned label files is not equal to number of given channels.")
+            return
+        for ind, labelpath in enumerate(self.label_files):
+            ovpath = pl.Path(savedir).joinpath(f'overlay_{labelpath.stem}.tif')
+            overlay_images(ovpath, self.image_data.image.path, labelpath, ijpath, channel_n=channels[ind])
 
     def read_labels(self, label_file: Pathlike = None):
         """Get label data from label file(s)."""
@@ -1003,8 +1006,7 @@ class PredictObjects:
     def use_model(model_input: str):
         return PredictObjects.model_instances.get(model_input)
 
-    def predict(self, model_and_ch_nro: Tuple[str, int], out_path: str, make_overlay: bool = True,
-                n_tiles: Optional[Tuple[int, ...]] = None, overlay_path: Optional[str] = None,
+    def predict(self, model_and_ch_nro: Tuple[str, int], out_path: str, n_tiles: Optional[Tuple[int, ...]] = None,
                 **kwargs) -> Tuple[np.ndarray, dict]:
         """Perform a prediction to one image.
 
@@ -1014,13 +1016,9 @@ class PredictObjects:
                 Tuple of (str, int) that has name of model and then the index for the channel the model is applied to.
             out_path : str
                 Path to the label file output directory.
-            make_overlay : bool
-                Whether to create a flattened overlay image of
             n_tiles : [None, tuple]
                 Tuple with number of tiles for each axis. If None, number of tiles is defined from Class-attribute
                 default_config or from kwargs.
-            overlay_path : str
-                Path where overlay image is saved to if created.
         Returns
         =======
             labels : np.ndarray
@@ -1037,10 +1035,9 @@ class PredictObjects:
         else:
             img = normalize(self.image.get_channels(chan), 1, 99.8, axis=(0, 1, 2))
         probt, nmst = config.get('probability_threshold'), config.get('nms_threshold')
-        print(f"\n{self.image.name}; Model = {model_name} ; Image dims = {self.image.shape}" # ; Thresholds:" +
+        print(f"\n{self.image.name}; Model = {model_name} ; Image dims = {self.image.shape}"  # ; Thresholds:" +
               # TODO account for printing thresholds from either model or from user input
-              # f"{str(probt) if probt is None else round(probt, 3)} probability, " +
-              # f"{str(nmst) if nmst is None else round(nmst, 3)} NMS)"
+              # f"{str(probt) if probt is None else round(probt, 3)} probability, " + f"{str(nmst) if nmst is None else round(nmst, 3)} NMS)"
               )
 
         # Define tile number if big image
@@ -1060,13 +1057,6 @@ class PredictObjects:
         self.image.compatible_save(labels, str(save_label))
         if save_label not in self.label_paths:
             self.label_paths.append(str(save_label))
-
-        # TODO: replace overlay plotting
-        # if make_overlay and config.get("imagej_path") is not None:  # Create and save overlay tif of the labels
-        #     ov_save_path = overlay_path if overlay_path is not None else out_path
-        #     overlay_images(pl.Path(ov_save_path).joinpath(f'overlay_{file_stem}.tif'),
-        #                    self.image.path, save_label, config.get("imagej_path"),
-        #                    channel_n=chan)
         return labels, details
 
     def define_tiles(self, dims: Tuple[int, int, int]) -> Tuple[int, int, int]:
@@ -1209,8 +1199,8 @@ def overlay_images(save_path: Pathlike, path_to_image: Pathlike,
             except StopIteration: continue
         return "Green"
 
-    def _files_exist(flag = 0):
-        if not pl.Path(imagej_path).exists():
+    def _files_exist(flag=0):
+        if imagej_path is None or not pl.Path(imagej_path).exists():
             warn("Path to ImageJ run-file is incorrect. Overlay-plots will not be created.")
             flag += 1
         if not macro_file.exists():
@@ -1230,7 +1220,6 @@ def overlay_images(save_path: Pathlike, path_to_image: Pathlike,
     lut_name = _find_lut(pl.Path(imagej_path).parent.joinpath("luts"), luts)
     input_args = ";;".join([str(save_path), str(path_to_image), str(path_to_label), str(channel_n), lut_name])
     # fiji_cmd = " ".join([str(imagej_path), "--headless --console -macro", str(macro_file), f'"{input_args}"'])
-    print("Creating overlay")
     ps = subprocess.Popen(
         # fiji_cmd,
         [str(imagej_path), "--headless", "-macro", str(macro_file), f'{input_args}'],
@@ -1290,7 +1279,6 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
             images = ImageData(image_file, paths_to_labels=label_files, voxel_dims=voxel_dims)
             dim_warning.update({images.name: all([v==1 for v in images.voxel_dims])})
         except ShapeMismatchError: raise
-            # continue  # TODO: supposed to be raise?
 
         # Prediction:
         if not labels_exist:
@@ -1300,16 +1288,18 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
         # Get information on label objects
         print("\nCollecting label data.\n")
         label_data = CollectLabelData(images, convert_to_micron=to_microns)
-        label_data(out_path=out_path, lam_compatible=lam_out, filters=prediction_conf.get('filters'), save_data=True
-                   #filter_images=predictor.label_paths
-                   )
-        # TODO: Add creation of overlay images
+        label_data(out_path=out_path, lam_compatible=lam_out, filters=prediction_conf.get('filters'), save_data=True)
         # Print description of collected data
         for data in label_data.output:
             if data[2] is None or data[2].empty:
                 print(f"Model:  {data[0]}\nFile:  {data[1]}\n{'NO FOUND LABELS'}\n")
             else:
                 print(f"Model:  {data[0]}\nFile:  {data[1]}\n{data[2].describe()}\n")
+        # Create overlaid intensity/label-images
+        label_data.create_overlays(out_path, prediction_conf.get('imagej_path'), prediction_conf.get('prediction_chs'))
+
+        # TODO: Stop masking of label images and creation of overlays if prediction is not performed on the run?
+
     imgw = dim_warning.values()
     if to_microns and any(imgw) and not all(imgw):
         warn(f"UserWarning: {sum(imgw)}/{len(dim_warning.keys())} images have missing dimension info."+""
