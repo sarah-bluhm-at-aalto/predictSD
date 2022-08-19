@@ -680,7 +680,7 @@ class CollectLabelData:
                 directory, name = file.parent, file.name
                 path = pl.Path(directory, "filtered", name)
                 path.parent.mkdir(exist_ok=True)
-                self.image_data.label_paths[item] = path
+                self.output.label_files = (item, path)
             self.image_data.image.compatible_save(labels, path)
             if print_no: print(f"{self.get_label_names()[item]}: {len(ids)} labels masked.")
 
@@ -689,7 +689,7 @@ class CollectLabelData:
         if len(channels) != len(self.label_files):
             warn("Number of assigned label files is not equal to number of given channels.")
             return
-        for ind, labelpath in enumerate(self.label_files):
+        for ind, labelpath in enumerate(self.output.label_files):
             ovpath = pl.Path(savedir).joinpath(f'overlay_{labelpath.stem}.tif')
             overlay_images(ovpath, self.image_data.image.path, labelpath, ijpath, channel_n=channels[ind])
 
@@ -777,15 +777,14 @@ class OutputData:
     """
 
     def __init__(self, label_paths: List[Pathlike], label_names: Optional[List[str]] = None) -> None:
-        self._label_files = [str(p) for p in label_paths]
         l_range = [f"Ch{v}" for v in range(len(label_paths))]
         self._label_names = l_range if label_names is None else label_names
         self._output = [None for _ in label_paths]
-        assert len(self._label_names) == len(self._output) == len(label_paths)
+        self.label_files = [p for p in label_paths]
 
     def __setitem__(self, key: Union[int, str, pl.Path], data: Optional[pd.DataFrame]) -> None:
         if isinstance(key, str) or isinstance(key, pl.Path):
-            key = self._label_files.index(str(pl.Path(key)))
+            key = self.label_files.index(pl.Path(key))
         if data is None or isinstance(data, pd.DataFrame):
             self._output[key] = data
 
@@ -802,6 +801,20 @@ class OutputData:
         if self._output[item] is None:
             print(f"Output data not found for {self._label_files[item]}.")
         return self._label_names[item], str(self._label_files[item]), self._output[item]
+
+    @property
+    def label_files(self) -> list:
+        """Read image."""
+        return self._label_files
+
+    @label_files.setter
+    def label_files(self, paths: Union[List[Pathlike], Tuple[int, Pathlike]]) -> NoReturn:
+        """Set path to image."""
+        if isinstance(paths, tuple):
+            self._label_files[paths[0]] = pl.Path(paths[1])
+        elif isinstance(paths, list):
+            self._label_files = [pl.Path(p) for p in paths]
+        assert len(self._label_names) == len(self._output) == len(self._label_files)
 
     def filter_output(self, index: int, column: str, value: float, filter_type: str) -> Set[int]:
         """Filter an output DataFrame based on each label's value in given column.
