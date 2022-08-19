@@ -140,12 +140,6 @@ class PredictionConfig:  # (TypedDict):
     fill_holes : bool
         # If True, PredictObjects fills holes in obtained labels.
 
-# # @tf.function
-# def pfunc(model, iseq):
-#     for ind, item in enumerate(iseq):
-#         model.predict(item[ind])
-#
-#
 # class ImageSequence(Sequence):
 #     def __init__(self, filenames, name, key='image', type='train'):
 #         super().__init__()
@@ -390,7 +384,6 @@ class ImageFile:
                 # self.bits = _get_tag(tif, "BitsPerSample")
                 # TODO: define existing units - tif.imagej_metadata.get('unit') ; "\\u00B5m" is micrometer
                 self.dtype = tif.series[0].dtype
-
                 # Find micron sizes of voxels
                 if not self.is_label and self.voxel_dims is None:
                     self._find_voxel_dims(tif.imagej_metadata.get('spacing'), _get_tag(tif, "YResolution"),
@@ -461,8 +454,7 @@ class CollectLabelData:
         label_files : str, pl.Path
             Outputs a list containing paths to label-images related to the microscopy image.
         output : labelCollect.OutputData
-            Indexable object that stores the results of the given label-image paths. Results are stored in the same
-            order as in the label_files-attribute.
+            Stores the results of the given label-image paths in the same order as in self.label_files.
     Methods
     -------
         get_label_names()
@@ -470,8 +462,7 @@ class CollectLabelData:
         filter(filter_list: list)
             Apply a filter to data from one/all model(s).
         read_labels(label_file = None)
-            Collect label info from label-images. Reads only label_file if it is given, else collects data from all
-            files in self.label_files.
+            Collect label info from label-images. Collects data from all in self.label_files unless label_file is given.
         save(out_path, item = 0, label_name = None, lam_compatible = True, decimal_precision = 4)
     """
 
@@ -509,20 +500,24 @@ class CollectLabelData:
         ----------
             save_data : bool
                 Whether to save the collected data as a file. The data is stored to self.output in any case.
-            out_path : str, pl.Path
+            out_path : Pathlike
                 Path to the save folder if save_data is True.
-            filters : list
-                List of tuples containing filters to apply. See CollectLabelData.filter().
+            filters : List[tuple]
+                Filters to apply. See CollectLabelData.filter().
         """
         if save_data and out_path is None:
-            print("CollectLabelData.__call__() requires path to output-folder (out_path: str, pathlib.Path).")
+            warn("CollectLabelData.__call__() requires path to output-folder (out_path: str, pathlib.Path).")
             return
         # Collect data from each label file:
         for ind, label_file in enumerate(self.label_files):
             self.read_labels(label_file=label_file)
         if filters is not None:
-            filtered = self.filter(filters)
-            self.mask_labels(filtered)
+            filtered = self.filter(filters, print_no=False)
+            self.mask_labels(filtered, print_no=False)
+            names = self.get_label_names()
+            for ind, ids in filtered.items():
+                print(f"{names[ind]}: {len(ids)} labels filtered from results and label images.")
+            print("\n")
         if save_data:
             for ind in range(len(self.label_files)):
                 self.save(out_path, item=ind, *args, **kwargs)
@@ -540,21 +535,22 @@ class CollectLabelData:
             return grouped_voxels.size() * np.nan
         return grouped_voxels.size() * np.prod(self.image_data.voxel_dims)
 
-    def filter(self, filter_list: list) -> dict:
+    def filter(self, filter_list: list, print_no: bool = True) -> dict:
         """Filter an output DataFrame based on each label's value in given column.
         Parameters
         ----------
             filter_list : list
                 List containing a tuple for each filter. Each tuple must contain 1) index of data or name/model, 2) name
                 of column for filtering, 3) threshold value, and 4) 'min' or 'max' to set direction of filtering. If the
-                first item in tuple is 'all', the filter is performed on all output DataFrames.
-                For example, filter_list = [('all', 'Area', 5.0, 'min'), ('DAPI10x', 'Volume', 750.0, 'max')] would
-                filter all labels with area less than 5, and would additionally filter labels with volume more than 750
-                from the DAPI10x information.
+                first item in tuple is 'all', the filter is performed on all output DataFrames. For example,
+                filter_list = [('all', 'Area', 5.0, 'min'), ('DAPI10x', 'Volume', 750.0, 'max')] filters all labels with
+                area less than 5, but on DAPI10x also labels with volume more than 750.
+            print_no : bool
+                Print number of filtered labels.
         Returns
         =======
             filtered : dict
-                Contains the sets of filtered IDs for each item in self.output, named after index positions.
+                Contains the sets of filtered IDs for each item in self.output with index positions as keys.
         """
         def __resolve_targets() -> List:
             target_list = []
@@ -577,9 +573,9 @@ class CollectLabelData:
                 target_list.append(items)
             return target_list
 
-        def __use_filter(ids):
+        def __use_filter(label_files):
             """Determine if an item belongs to the given targets of a filter."""
-            return item in ids
+            return item in label_files
 
         filtered = {}
         # Resolve targets for each filter:
@@ -592,6 +588,7 @@ class CollectLabelData:
                 ids = self.output.filter_output(index=item, column=flt[1], value=flt[2], filter_type=flt[3])
                 dropped_ids = dropped_ids.union(ids)
             filtered[item] = dropped_ids
+            if print_no: print(f"{self.get_label_names()[item]}: {len(dropped_ids)} labels filtered.")
         return filtered
 
     def gather_data(self, label_file: Pathlike) -> Union[pd.DataFrame, None]:
@@ -658,7 +655,8 @@ class CollectLabelData:
         """Get label names of all label files defined for the instance."""
         return [ImageFile(p, is_label=True).label_name for p in self.label_files]
 
-    def mask_labels(self, filtered: Dict[int, Union[set, list]], overwrite: bool = False) -> NoReturn:
+    def mask_labels(self, filtered: Dict[int, Union[set, list]], overwrite: bool = False, print_no: bool = True
+                    ) -> NoReturn:
         """Mask given labels from existing label-files.
 
         Parameters
@@ -668,10 +666,10 @@ class CollectLabelData:
                 values. E.g., filtered = {0: {1,2,5}, 1: {6}}
             overwrite : bool
                 Whether to overwrite the unfiltered label image.
+            print_no : bool
+                Print number of filtered labels.
         """
         for item, ids, in filtered.items():
-            if len(ids) == 0:
-                continue
             self.image_data.select(item)
             labels = self.image_data.labels.img
             labels[np.isin(labels, list(ids))] = 0
@@ -684,6 +682,7 @@ class CollectLabelData:
                 path.parent.mkdir(exist_ok=True)
                 self.image_data.label_paths[item] = path
             self.image_data.image.compatible_save(labels, path)
+            if print_no: print(f"{self.get_label_names()[item]}: {len(ids)} labels masked.")
 
     def create_overlays(self, savedir: Pathlike, ijpath: Pathlike, channels: List[int]):
         print("Creating overlays.")
