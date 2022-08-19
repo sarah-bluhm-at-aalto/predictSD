@@ -775,12 +775,13 @@ class OutputData:
         AssertionError
             If length of label_paths and label_names does not match.
     """
-
     def __init__(self, label_paths: List[Pathlike], label_names: Optional[List[str]] = None) -> None:
         l_range = [f"Ch{v}" for v in range(len(label_paths))]
         self._label_names = l_range if label_names is None else label_names
         self._output = [None for _ in label_paths]
-        self.label_files = [p for p in label_paths]
+        self._label_files = [p for p in label_paths]
+        self._filters = None
+        self._dropped = None
 
     def __setitem__(self, key: Union[int, str, pl.Path], data: Optional[pd.DataFrame]) -> None:
         if isinstance(key, str) or isinstance(key, pl.Path):
@@ -801,6 +802,32 @@ class OutputData:
         if self._output[item] is None:
             print(f"Output data not found for {self._label_files[item]}.")
         return self._label_names[item], str(self._label_files[item]), self._output[item]
+
+    @property
+    def dropped(self):
+        return self._dropped
+
+    @dropped.setter
+    def dropped(self, ids: tuple):
+        if self._dropped is None: self._dropped = dict()
+        if ids[0] in self._dropped.keys():
+            model_ids = self._dropped.get(ids[0])
+            combined_ids = model_ids.union(ids[1])
+            self._dropped[ids[0]] = combined_ids
+        else:
+            self._dropped[ids[0]] = ids[1]
+
+    @property
+    def filters(self):
+        return self._filters
+
+    @filters.setter
+    def filters(self, new_filter: tuple):
+        if self._filters is None: self._filters = dict()
+        if new_filter[0] not in self._filters.keys():
+            self._filters[new_filter[0]] = [new_filter[1][1]]
+        else:
+            self._filters[new_filter[0]].append([new_filter[1][1]])
 
     @property
     def label_files(self) -> list:
@@ -833,10 +860,8 @@ class OutputData:
         """
         output_data = self._output[index]
         if not isinstance(output_data, pd.DataFrame):
-            if output_data is None:
-                message = "Missing label information. Use CollectLabelData.read_labels()."
-            else:
-                message = f"Object at index '{index}' is not a DataFrame."
+            if output_data is None: message = "Missing label information. Use CollectLabelData.read_labels()."
+            else: message = f"Object at index '{index}' is not a DataFrame."
             print(f"Filter failed - {message}\n")
             return set()
 
@@ -849,7 +874,11 @@ class OutputData:
                 warn("Filter failed - Type must be either 'min' or 'max'.")
                 return set()
             self._output[index] = filtered_output
-            return set(output_data.index).difference(set(filtered_output.index))
+            filtered = set(output_data.index).difference(set(filtered_output.index))
+            self.filters = (self._label_names[index], (column, value, filter_type))
+            self.dropped = (self._label_names[index], filtered)
+            # TODO: Returning of filtered IDs necessary? If not, handle through self.dropped
+            return filtered
         except IndexError:
             print(f"Given column name '{column}' not found!\nAvailable columns: {output_data.columns}\n")
 
