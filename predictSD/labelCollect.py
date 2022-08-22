@@ -459,7 +459,7 @@ class CollectLabelData:
     -------
         get_label_names()
             Returns the final component of each label-file, i.e. its model or channel identifier.
-        filter(filter_list: list)
+        apply_filters(filter_list: list)
             Apply a filter to data from one/all model(s).
         read_labels(label_file = None)
             Collect label info from label-images. Collects data from all in self.label_files unless label_file is given.
@@ -503,16 +503,15 @@ class CollectLabelData:
             out_path : Pathlike
                 Path to the save folder if save_data is True.
             filters : List[tuple]
-                Filters to apply. See CollectLabelData.filter().
+                Filters to apply. See CollectLabelData.apply_filters().
         """
         if save_data and out_path is None:
             warn("CollectLabelData.__call__() requires path to output-folder (out_path: str, pathlib.Path).")
             return
         # Collect data from each label file:
-        for ind, label_file in enumerate(self.label_files):
-            self.read_labels(label_file=label_file)
+        self.read_labels()
         if filters is not None:
-            filtered = self.filter(filters, print_no=False)
+            filtered = self.apply_filters(filters, print_no=False)
             self.mask_labels(filtered, print_no=False)
             names = self.get_label_names()
             for ind, ids in filtered.items():
@@ -535,7 +534,7 @@ class CollectLabelData:
             return grouped_voxels.size() * np.nan
         return grouped_voxels.size() * np.prod(self.image_data.voxel_dims)
 
-    def filter(self, filter_list: list, print_no: bool = True) -> dict:
+    def apply_filters(self, filter_list: list, print_no: bool = True) -> dict:
         """Filter an output DataFrame based on each label's value in given column.
         Parameters
         ----------
@@ -655,7 +654,7 @@ class CollectLabelData:
         """Get label names of all label files defined for the instance."""
         return [ImageFile(p, is_label=True).label_name for p in self.label_files]
 
-    def mask_labels(self, filtered: Dict[int, Union[set, list]], overwrite: bool = False, print_no: bool = True
+    def mask_labels(self, filtered: Dict[int, Union[set, list]] = None, overwrite: bool = False, print_no: bool = True
                     ) -> NoReturn:
         """Mask given labels from existing label-files.
 
@@ -669,6 +668,7 @@ class CollectLabelData:
             print_no : bool
                 Print number of filtered labels.
         """
+        filtered = filtered if filtered is not None else self.output.dropped
         for item, ids, in filtered.items():
             self.image_data.select(item)
             labels = self.image_data.labels.img
@@ -693,7 +693,7 @@ class CollectLabelData:
             ovpath = pl.Path(savedir).joinpath(f'overlay_{labelpath.stem}.tif')
             overlay_images(ovpath, self.image_data.image.path, labelpath, ijpath, channel_n=channels[ind])
 
-    def read_labels(self, label_file: Pathlike = None):
+    def read_labels(self, label_file: Pathlike = None) -> NoReturn:
         """Get label data from label file(s)."""
         # If Class-object does not have pre-defined label files and no label file is given, raise error
         if not self.label_files and label_file is None:
@@ -779,7 +779,7 @@ class OutputData:
         l_range = [f"Ch{v}" for v in range(len(label_paths))]
         self._label_names = l_range if label_names is None else label_names
         self._output = [None for _ in label_paths]
-        self._label_files = [p for p in label_paths]
+        self._label_files = [pl.Path(p) for p in label_paths]
         self._filters = None
         self._dropped = None
 
@@ -804,7 +804,7 @@ class OutputData:
         return self._label_names[item], str(self._label_files[item]), self._output[item]
 
     @property
-    def dropped(self):
+    def dropped(self) -> dict:
         return self._dropped
 
     @dropped.setter
@@ -818,7 +818,7 @@ class OutputData:
             self._dropped[ids[0]] = ids[1]
 
     @property
-    def filters(self):
+    def filters(self) -> dict:
         return self._filters
 
     @filters.setter
@@ -864,7 +864,6 @@ class OutputData:
             else: message = f"Object at index '{index}' is not a DataFrame."
             print(f"Filter failed - {message}\n")
             return set()
-
         try:
             if filter_type == 'min':
                 filtered_output = output_data.loc[output_data.loc[:, column] >= value, :]
@@ -875,8 +874,8 @@ class OutputData:
                 return set()
             self._output[index] = filtered_output
             filtered = set(output_data.index).difference(set(filtered_output.index))
-            self.filters = (self._label_names[index], (column, value, filter_type))
-            self.dropped = (self._label_names[index], filtered)
+            self.filters = (index, (column, value, filter_type))
+            self.dropped = (index, filtered)
             # TODO: Returning of filtered IDs necessary? If not, handle through self.dropped
             return filtered
         except IndexError:
@@ -887,8 +886,7 @@ class OutputData:
         output = self._output[label_ind]
         if isinstance(output, pd.DataFrame):
             return output.rename(columns={"X": "Position X", "Y": "Position Y", "Z": "Position Z"})
-        else:
-            return None
+        else: return None
 
 
 class PredictObjects:
@@ -917,10 +915,9 @@ class PredictObjects:
             PredictObjects.default_config or in kwargs.
     """
     model_instances = {}
-    default_config = { "sd_models": None, "prediction_chs": 0, "predict_big": False,
-        "nms_threshold": None, "probability_threshold": None, "z_div": 1, "long_div": 2, "short_div": 1,
-        "memory_limit": None, "imagej_path": None, "fill_holes": True
-    }
+    default_config = {"sd_models": None, "prediction_chs": 0, "predict_big": False, "nms_threshold": None,
+                      "probability_threshold": None, "z_div": 1, "long_div": 2, "short_div": 1, "memory_limit": None,
+                      "imagej_path": None, "fill_holes": True}
 
     def __init__(self, images: ImageData, mdir: Pathlike = None,  **prediction_config) -> None:
         """
@@ -1017,7 +1014,7 @@ class PredictObjects:
                     model_input[ind] = (model.name, model_channel)
                     if model.name not in PredictObjects.model_instances.keys():
                         PredictObjects.model_instances[model.name] = model
-                # As above, but for non-initiated models:
+            # As above, but for non-initiated models:
                 elif isinstance(model_name, str):
                     if model_name in ('2D_versatile_fluo', '2D_versatile_he'):
                         stripped_name = model_name.replace('_', '')
@@ -1187,7 +1184,7 @@ def corresponding_imgs(file_name: str, target_path: str) -> list:
         files = [p for p in [*pl.Path(target_path).glob(f'{file_name}*')] if p.suffix in ['.tif', '.tiff']]
         return files
     except IndexError:
-        warn(f"UserWarning: Could not find image with search string ' {file_name} '.\n"+
+        warn(f"UserWarning: Could not find image with search string '{file_name}'.\n" +
              "-> Assert that image files are named sample_name.labels.tif and sample_name.tif")
 
 
@@ -1260,19 +1257,14 @@ def overlay_images(save_path: Pathlike, path_to_image: Pathlike,
     luts = {'glasbey_inverted': 'glasbey_inverted', '16_colors': '16_colors', '16_Colors': '16 Colors'}
     lut_name = _find_lut(pl.Path(imagej_path).parent.joinpath("luts"), luts)
     input_args = ";;".join([str(save_path), str(path_to_image), str(path_to_label), str(channel_n), lut_name])
-    # fiji_cmd = " ".join([str(imagej_path), "--headless --console -macro", str(macro_file), f'"{input_args}"'])
-    ps = subprocess.Popen(
-        # fiji_cmd,
-        [str(imagej_path), "--headless", "-macro", str(macro_file), f'{input_args}'],
-        shell=False, stdout=subprocess.PIPE)
+    ps = subprocess.Popen([str(imagej_path), "--headless", "-macro", str(macro_file), f'{input_args}'],
+                          shell=False, stdout=subprocess.PIPE)
     try:
         outs, errs = ps.communicate(timeout=20)
-        # ps = subprocess.run(fiji_cmd, shell=True, check=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, timeout=10)
     except subprocess.CalledProcessError as e: warn(e.stderr)
     except subprocess.TimeoutExpired:
         warn("Overlay-subprocess timeout!\nSubprocess may require ImageJ to be open!\n")
         ps.kill()
-        # outs, errs = ps.communicate()
 
 
 def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf: dict = None, lam_out: bool = True,
