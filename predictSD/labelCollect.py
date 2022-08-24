@@ -209,6 +209,11 @@ class ImageData:
         if self.labels is not None:
             self._test_img_shapes()
 
+    def __str__(self):
+        label_num = 0 if self.label_paths is None else len(self.label_paths)
+        return f'ImageData {self.name}; Label files = {label_num}; 2D = {self.is_2d}'
+
+
     def _get_intensities(self, notnull: tuple) -> dict:
         """Read intensities of labelled voxels.
 
@@ -342,6 +347,9 @@ class ImageFile:
         self.voxel_dims = force_dims
         self.dtype = None
         self._define_attributes(self.path)
+
+    def __str__(self):
+        return f'{self.path.name}; Image shape = {self.shape}; Voxel dims = {self.voxel_dims}'
 
     @property
     def img(self) -> np.ndarray:
@@ -786,6 +794,10 @@ class OutputData:
         self._filters = None
         self._dropped = None
 
+    def __str__(self):
+        indices = {i: n for i, n in enumerate(self._label_names)}
+        return f'OutputData labels={indices}; filters={self.filters}'
+
     def __setitem__(self, key: Union[int, str, pl.Path], data: Optional[pd.DataFrame]) -> None:
         if isinstance(key, str) or isinstance(key, pl.Path):
             key = self.label_files.index(pl.Path(key))
@@ -1076,7 +1088,7 @@ class PredictObjects:
         else:
             img = normalize(self.image.get_channels(chan), 1, 99.8, axis=(0, 1, 2))
         probt, nmst = config.get('probability_threshold'), config.get('nms_threshold')
-        print(f"\n{self.image.name}; Model = {model_name} ; Image dims = {self.image.shape}"  # ; Thresholds:" +
+        print(f"\n{str(self.image)}; Model = {model_name}"  # ; Thresholds:" +
               # TODO account for printing thresholds from either model or from user input
               # f"{str(probt) if probt is None else round(probt, 3)} probability, " + f"{str(nmst) if nmst is None else round(nmst, 3)} NMS)"
               )
@@ -1322,15 +1334,16 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
             _ = predictor(out_path=lbl_path, overlay_path=out_path, return_details=True)
 
         # Get information on label objects
-        print("\nCollecting label data.\n")
+        print("\nCollecting label data.")
         label_data = CollectLabelData(images, convert_to_micron=to_microns)
         label_data(out_path=out_path, lam_compatible=lam_out, filters=prediction_conf.get('filters'), save_data=True)
         # Print description of collected data
         for data in label_data.output:
-            if data[2] is None or data[2].empty:
-                print(f"Model:  {data[0]}\nFile:  {data[1]}\n{'NO FOUND LABELS'}\n")
+            df = data[2]
+            if df is None or df.empty:
+                print(f"Model: {data[0]}\nFile:  {data[1]}\n{'NO FOUND LABELS'}\n")
             else:
-                print(f"Model:  {data[0]}\nFile:  {data[1]}\n{data[2].describe()}\n")
+                print(f"Model: {data[0]}\nFile:  {data[1]}\n{df.loc[:, ~df.columns.isin(['Z','Y','X'])].describe()}\n")
         # Create overlaid intensity/label-images
         label_data.create_overlays(out_path, prediction_conf.get('imagej_path'), prediction_conf.get('prediction_chs'))
 
