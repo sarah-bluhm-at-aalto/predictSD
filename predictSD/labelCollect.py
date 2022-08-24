@@ -1325,7 +1325,7 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
 
         try:  # Assign image/label object, read metadata
             images = ImageData(image_file, paths_to_labels=label_files, voxel_dims=voxel_dims)
-            dim_warning.update({images.name: all([v==1 for v in images.voxel_dims])})
+            dim_warning.update({images.name: all([v == 1. for v in images.voxel_dims])})
         except ShapeMismatchError: raise
 
         # Prediction:
@@ -1349,10 +1349,9 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
 
         # TODO: Stop masking of label images and creation of overlays if prediction is not performed on the run?
 
-    imgw = dim_warning.values()
-    if to_microns and any(imgw) and not all(imgw):
-        warn(f"UserWarning: {sum(imgw)}/{len(dim_warning.keys())} images have missing dimension info."+""
-             " Recommendation to either 1) set micron conversion to False, or 2) forcing the correct micron lengths.")
+    if to_microns and any(dim_warning.values()):
+        warn(f"{sum(dim_warning.values())} out of {len(dim_warning.keys())} images are missing dimension info. " +
+             "Either 1) set micron conversion to False, or 2) assign correct voxel micron dimensions.")
 
 
 if __name__ == "__main__":
