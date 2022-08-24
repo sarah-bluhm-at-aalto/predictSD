@@ -3,6 +3,7 @@
   * [labelCollect.py](#labelcollectpy)
     + [Output](#output)
   * [Usage](#usage)
+    + [Filtering the Labels](#filtering-the-labels)
     + [Memory Management](#memory-management)
   * [Models](#models)
   * [Additional info](#additional-info)
@@ -54,6 +55,9 @@ segment [Additional info](#Additional info) for more about the slope calculation
 for **all** channels in the image and have their column names appended with suffix <samp>'_Ch='</samp> plus the 
 channel's index.
 
+The result tables and the images of the predicted labels can be filtered using the gathered information. See
+[Filtering the Labels](#filtering-the-labels).
+
 ------------------------
 
 ## Usage  
@@ -89,7 +93,7 @@ lbldata = ps.CollectLabelData(image, convert_to_micron=True)    # Initiate class
 
 # Collect object intensities, area, volume, etc.
 lbldata(out_path=res_out, lam_compatible=True, save_data=True, 
-        filters=[('all', 'Area', 15.0, 'min')])                 # Filters can also be applied to the label information
+        filters=[('all', 'Area', 5.0, 'min')])                 # Filters can also be applied to the label information
 ```
 All output data is saved to <samp>out_path</samp> if <samp>save_data</samp> is `True`, but can also be accessed via the 
 <samp>output</samp>-attribute of `CollectLabelData`, either by indexing with an integer or with the label-image's path.
@@ -159,6 +163,58 @@ ps.CollectLabelData(image, convert_to_micron=True, label_names=names
                     )(out_path=res_out, lam_compatible=True, save_data=True,
                       decimal_precision=3)                      # Definition of precision for the result file(s)
 ```
+### Filtering the Labels
+NOTE: a label's ID is, and must be, synonymous with the label's pixel value in the label images.
+
+A `predictSD.CollectLabelData`-instance can be supplied with filter tuples to drop unwanted labels. These are
+applied on the columns of the collected label information and can be used to drop, for example, labels that are too
+small to be nuclei. Above, <samp>('all', 'Area', 5.0, 'min')</samp> was given to filter labels from **all used models**
+with planar area smaller than 5.0. The filters can also be applied on a single model by changing the string
+<samp>'all'</samp> to the name of the specific model. To filter with an upper threshold, use <samp>'max'</samp> instead
+of <samp>'min'</samp>.
+
+Passing the filter tuples as argument to an instance call automatically filters the result tables and masks the label
+images.
+```python
+filters = [('all', 'Area', 5.0, 'min'), ('DAPI10x', 'Volume', 90.0, 'max')]
+image = ps.ImageData(r"C:\testSet\ctrl_1146.tif",  paths_to_labels=labels)
+
+# Instance call to perform information collection, application of filters, and masking of label images
+label_data = ps.CollectLabelData(image, convert_to_micron=True) 
+label_data(out_path=res_out, save_data=True,  filters=filters)
+```
+Alternatively, the filtering and masking can be performed separately after the label information has been collected.
+```python
+label_data2 = ps.CollectLabelData(image, convert_to_micron=True)
+label_data2.read_labels()                                       # Reading of label information
+label_data2.apply_filters(filters)                              # Apply all given filters
+label_data2.mask_labels()                                       # Mask filtered labels from images
+```
+The `.mask_labels()` uses filtering information created by either `predictSD.CollectLabelData.__call__()` or 
+`.apply_filters()`. This information can be accessed through the properties `.output.filters` and `.output.dropped`.
+```console
+In[1]: print(label_data.output.filters)
+Out[1]: {0: [('Area', 5.0, 'min')], 1: [('Area', 5.0, 'min'), ('Volume', 90, 'max')]}
+
+In[2]: print(label_data2.output.dropped)
+Out[2]: {0: {7, 19, 20, 42, 49, 50}, 1: {5, 6, 7}}
+```
+A user-defined filter can be applied to the label information and the dropped label IDs can be passed to mask images.
+The information on filtered labels must be given to `.mask_labels()` in a similar format as `.output.dropped`, with
+index positions as keys and label IDs as values.
+```python
+label_data3 = ps.CollectLabelData(image, convert_to_micron=True) 
+label_data3.read_labels()
+(_, _, label_table) = label_data3.output[0]                     # Using data at index 0
+filtered2 = user_defined_filter(label_table, index=0)           # E.g., filtered2 = {0: {1,2,6}}
+label_data3.mask_labels(filtered=filtered2, overwrite=True)
+```
+User-created filters however do not show up on the `output`-properties.
+```console
+In[1]: print(label_data3.output.filters)
+Out[1]: {}
+```
+
 ### Memory Management
 Available GPU memory is a limiting factor for object prediction on larger images. The total GPU memory in megabytes and
 allocatable fraction can be provided to <samp>prediction_config</samp> as a tuple when initiating `predictSD.PredictObjects`
