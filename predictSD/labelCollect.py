@@ -511,7 +511,7 @@ class CollectLabelData:
         # Collect data from each label file:
         self.read_labels()
         if filters is not None:
-            filtered = self.apply_filters(filters, print_no=False)
+            filtered = self.apply_filters(filters, print_no=False, ret=True)
             self.mask_labels(filtered, print_no=False)
             names = self.get_label_names()
             for ind, ids in filtered.items():
@@ -686,14 +686,15 @@ class CollectLabelData:
             self.image_data.image.compatible_save(labels, path)
             if print_no: print(f"{self.get_label_names()[item]}: {len(ids)} labels masked.")
 
-    def create_overlays(self, savedir: Pathlike, ijpath: Pathlike, channels: List[int]):
+    def create_overlays(self, savedir: Pathlike, ijpath: Pathlike, channels: Union[Tuple, List, int]):
         print("Creating overlays.")
+        if isinstance(channels, int): channels = [channels]
         if len(channels) != len(self.label_files):
             warn("Number of assigned label files is not equal to number of given channels.")
             return
-        for ind, labelpath in enumerate(self.output.label_files):
-            ovpath = pl.Path(savedir).joinpath(f'overlay_{labelpath.stem}.tif')
-            overlay_images(ovpath, self.image_data.image.path, labelpath, ijpath, channel_n=channels[ind])
+        for ind, label_path in enumerate(self.output.label_files):
+            ov_path = pl.Path(savedir).joinpath(f'overlay_{label_path.stem}.tif')
+            overlay_images(ov_path, self.image_data.image.path, label_path, ijpath, channel_n=channels[ind])
 
     def read_labels(self, label_file: Pathlike = None) -> NoReturn:
         """Get label data from label file(s)."""
