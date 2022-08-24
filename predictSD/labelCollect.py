@@ -534,7 +534,7 @@ class CollectLabelData:
             return grouped_voxels.size() * np.nan
         return grouped_voxels.size() * np.prod(self.image_data.voxel_dims)
 
-    def apply_filters(self, filter_list: list, print_no: bool = True) -> dict:
+    def apply_filters(self, filter_list: list, print_no: bool = True, ret: bool = False) -> dict:
         """Filter an output DataFrame based on each label's value in given column.
         Parameters
         ----------
@@ -546,6 +546,8 @@ class CollectLabelData:
                 area less than 5, but on DAPI10x also labels with volume more than 750.
             print_no : bool
                 Print number of filtered labels.
+            ret : bool
+                whether to return the IDs of the filtered labels
         Returns
         =======
             filtered : dict
@@ -588,7 +590,7 @@ class CollectLabelData:
                 dropped_ids = dropped_ids.union(ids)
             filtered[item] = dropped_ids
             if print_no: print(f"{self.get_label_names()[item]}: {len(dropped_ids)} labels filtered.")
-        return filtered
+        if ret: return filtered
 
     def gather_data(self, label_file: Pathlike) -> Union[pd.DataFrame, None]:
         """Get output DataFrame containing descriptive values of the labels.
@@ -656,7 +658,7 @@ class CollectLabelData:
 
     def mask_labels(self, filtered: Dict[int, Union[set, list]] = None, overwrite: bool = False, print_no: bool = True
                     ) -> NoReturn:
-        """Mask given labels from existing label-files.
+        """Mask given labels from existing label-files and save the images.
 
         Parameters
         ----------
@@ -825,9 +827,9 @@ class OutputData:
     def filters(self, new_filter: tuple):
         if self._filters is None: self._filters = dict()
         if new_filter[0] not in self._filters.keys():
-            self._filters[new_filter[0]] = [new_filter[1][1]]
+            self._filters[new_filter[0]] = [new_filter[1]]
         else:
-            self._filters[new_filter[0]].append([new_filter[1][1]])
+            self._filters[new_filter[0]].append(new_filter[1])
 
     @property
     def label_files(self) -> list:
