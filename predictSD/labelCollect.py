@@ -1253,8 +1253,8 @@ def overlay_images(save_path: Pathlike, path_to_image: Pathlike,
         return "Green"
 
     def _files_exist(flag=0):
-        if imagej_path is None or not pl.Path(imagej_path).exists():
-            warn("Path to ImageJ run-file is incorrect. Overlay-plots will not be created.")
+        if imagej_path is not None and not pl.Path(imagej_path).exists():
+            warn("Given ImageJ-path does not exist - overlay-plots will not be created.")
             flag += 1
         if not macro_file.exists():
             warn("Label overlay plotting requires macro file 'overlayLabels.ijm'")
