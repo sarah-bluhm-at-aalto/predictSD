@@ -329,7 +329,7 @@ class ImageFile:
         Parameters
         ----------
             filepath : str, pl.Path
-                Full path to a image-file.
+                Full path to an image-file.
             is_label : bool
                 Set to true if given filepath points to a label-image.
             force_dims : tuple[float]
@@ -1275,7 +1275,7 @@ def overlay_images(save_path: Pathlike, path_to_image: Pathlike,
     ps = subprocess.Popen([str(imagej_path), "--headless", "-macro", str(macro_file), f'{input_args}'],
                           shell=False, stdout=subprocess.PIPE)
     try:
-        outs, errs = ps.communicate(timeout=20)
+        outs, errs = ps.communicate(timeout=45)
     except subprocess.CalledProcessError as e: warn(e.stderr)
     except subprocess.TimeoutExpired:
         warn("Overlay-subprocess timeout!\nSubprocess may require ImageJ to be open!\n")
