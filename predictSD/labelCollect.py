@@ -1196,7 +1196,7 @@ class AxesOrderError(Exception):
 def corresponding_imgs(file_name: str, target_path: str) -> list:
     """Find corresponding images based on name of the other."""
     try:
-        files = [p for p in [*pl.Path(target_path).glob(f'{file_name}*')] if p.suffix in ['.tif', '.tiff']]
+        files = [p for p in [*pl.Path(target_path).glob(f'{file_name}[._]*')] if p.suffix in ['.tif', '.tiff']]
         return files
     except IndexError:
         warn(f"UserWarning: Could not find image with search string '{file_name}'.\n" +
@@ -1345,7 +1345,9 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
             else:
                 print(f"Model: {data[0]}\nFile:  {data[1]}\n{df.loc[:, ~df.columns.isin(['Z','Y','X'])].describe()}\n")
         # Create overlaid intensity/label-images
-        label_data.create_overlays(out_path, prediction_conf.get('imagej_path'), prediction_conf.get('prediction_chs'))
+        if not labels_exist:
+            label_data.create_overlays(out_path, prediction_conf.get('imagej_path'),
+                                       prediction_conf.get('prediction_chs'))
 
         # TODO: Stop masking of label images and creation of overlays if prediction is not performed on the run?
 
