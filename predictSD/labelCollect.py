@@ -1,5 +1,5 @@
 r"""
-@version: 1.1.2
+@version: 1.2.0
 @author: Arto I. Viitanen
 
 Distributed under GNU General Public License v3.0
@@ -57,8 +57,11 @@ PREDICTSD_VARS = {
 
     # ZYX-axes voxel dimensions in microns. Size is by default read from image metadata.
     # KEEP AS None UNLESS SIZE METADATA IS WRONG. Dimensions are given as tuple, i.e. force_voxel_size=(Zdim, Ydim, Xdim)
-    'force_voxel_size': None
+    'force_voxel_size': None,
     # 10x=(8.2000000, 0.6500002, 0.6500002); 20x=(3.4, 0.325, 0.325)
+
+    # Whether to calculate intensity slopes on all channels. Intensity slopes are WIP and may cause unforeseen errors.
+    'calculate_slopes': False
 }
 
 # Give configuration for label prediction:
@@ -517,7 +520,7 @@ class CollectLabelData:
             warn("CollectLabelData.__call__() requires path to output-folder (out_path: str, pathlib.Path).")
             return
         # Collect data from each label file:
-        self.read_labels()
+        self.read_labels(**kwargs)
         if filters is not None:
             filtered = self.apply_filters(filters, print_no=False, ret=True)
             self.mask_labels(filtered, print_no=False)
@@ -527,7 +530,7 @@ class CollectLabelData:
             print("\n")
         if save_data:
             for ind in range(len(self.label_files)):
-                self.save(out_path, item=ind, *args, **kwargs)
+                self.save(out_path, item=ind, *args)
 
     def _get_area_maximums(self, voxel_data: pd.DataFrame) -> np.array:
         """Calculate maximal z-slice area of each object."""
@@ -600,7 +603,7 @@ class CollectLabelData:
             if print_no: print(f"{self.get_label_names()[item]}: {len(dropped_ids)} labels filtered.")
         if ret: return filtered
 
-    def gather_data(self, label_file: Pathlike) -> Union[pd.DataFrame, None]:
+    def gather_data(self, label_file: Pathlike, **kwargs) -> Union[pd.DataFrame, None]:
         """Get output DataFrame containing descriptive values of the labels.
 
         Parameters
@@ -655,9 +658,10 @@ class CollectLabelData:
             intensities.agg(np.nanmin).rename(lambda x: x.replace("Mean", "Min"), axis=1),
             intensities.agg(np.nanmax).rename(lambda x: x.replace("Mean", "Max"), axis=1),
             intensities.agg(np.nanmedian).rename(lambda x: x.replace("Mean", "Median"), axis=1),
-            intensities.agg(np.nanstd).rename(lambda x: x.replace("Mean", "StdDev"), axis=1),
-            intensities.agg(lambda yax, xax=pxl_distance: __intensity_slope(yax, xax)
-                            ).rename(lambda x: x.replace("Mean", "Slope"), axis=1)])
+            intensities.agg(np.nanstd).rename(lambda x: x.replace("Mean", "StdDev"), axis=1)])
+        if kwargs.get("slopes") is not None and kwargs.get("slopes") is True:
+            output = output.join(intensities.agg(lambda yax, xax=pxl_distance: __intensity_slope(yax, xax)
+                                                 ).rename(lambda x: x.replace("Mean", "Slope"), axis=1))
         return output
 
     def get_label_names(self):
@@ -695,7 +699,10 @@ class CollectLabelData:
             if print_no: print(f"{self.get_label_names()[item]}: {len(ids)} labels masked.")
 
     def create_overlays(self, savedir: Pathlike, ijpath: Pathlike, channels: Union[Tuple, List, int]):
-        print("Creating overlays.")
+        if ijpath is None:
+            warn("Missing ImageJ-path. Skipping overlay creation.")
+            return
+        else: print("Creating overlays.")
         if isinstance(channels, int): channels = [channels]
         if len(channels) != len(self.label_files):
             warn("Number of assigned label files is not equal to number of given channels.")
@@ -704,18 +711,18 @@ class CollectLabelData:
             ov_path = pl.Path(savedir).joinpath(f'overlay_{label_path.stem}.tif')
             overlay_images(ov_path, self.image_data.image.path, label_path, ijpath, channel_n=channels[ind])
 
-    def read_labels(self, label_file: Pathlike = None) -> NoReturn:
+    def read_labels(self, label_file: Pathlike = None, **kwargs) -> NoReturn:
         """Get label data from label file(s)."""
         # If Class-object does not have pre-defined label files and no label file is given, raise error
         if not self.label_files and label_file is None:
             raise MissingLabelsError
         # If file is given as an argument, read only given file
         if label_file is not None:
-            self.output[label_file] = self.gather_data(label_file)
+            self.output[label_file] = self.gather_data(label_file, **kwargs)
         # Otherwise, sequentially read all defined label files
         else:
             for ind, file_path in enumerate(self.label_files):
-                self.output[ind] = self.gather_data(file_path)
+                self.output[ind] = self.gather_data(file_path, **kwargs)
 
     def save(self, out_path: Pathlike, item: Union[int, str, pl.Path, pd.DataFrame] = 0,
              label_name: str = None, lam_compatible: bool = True, decimal_precision: Union[int, bool] = 4,
@@ -1283,8 +1290,8 @@ def overlay_images(save_path: Pathlike, path_to_image: Pathlike,
 
 
 def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf: dict = None, lam_out: bool = True,
-                   to_microns: bool = True, voxel_dims: Union[None, tuple] = None, labels_exist: bool = False)\
-        -> NoReturn:
+                   to_microns: bool = True, voxel_dims: Union[None, tuple] = None, labels_exist: bool = False,
+                   slopes: bool = False) -> NoReturn:
     """Perform analysis on all images in given directory.
 
     Parameters
@@ -1336,7 +1343,8 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
         # Get information on label objects
         print("\nCollecting label data.")
         label_data = CollectLabelData(images, convert_to_micron=to_microns)
-        label_data(out_path=out_path, lam_compatible=lam_out, filters=prediction_conf.get('filters'), save_data=True)
+        label_data(out_path=out_path, lam_compatible=lam_out, filters=prediction_conf.get('filters'), save_data=True,
+                   slopes=slopes)
         # Print description of collected data
         for data in label_data.output:
             df = data[2]
@@ -1365,6 +1373,7 @@ if __name__ == "__main__":
         lam_out=PREDICTSD_VARS.get('create_lam_output'),
         to_microns=PREDICTSD_VARS.get('coords_to_microns'),
         voxel_dims=PREDICTSD_VARS.get('force_voxel_size'),
-        labels_exist=PREDICTSD_VARS.get('label_existence')
+        labels_exist=PREDICTSD_VARS.get('label_existence'),
+        slopes=PREDICTSD_VARS.get('calculate_slopes')
     )
     print("DONE")
