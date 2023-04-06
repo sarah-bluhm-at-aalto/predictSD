@@ -17,7 +17,7 @@ Setup will be different depending on operating system.
 	b) LIB      C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4\lib\x64
 6. Create Python/Anaconda environment
 	a) Anaconda:
-	   1. conda create -n stardistenv python=3.9
+	   1. conda create -n stardistenv python=3.7
 	   2. conda activate stardistenv
 	       -------OR-------
 	   Python:
@@ -25,6 +25,7 @@ Setup will be different depending on operating system.
 	   2. stardistenv\Scripts\activate
 
 	b) Install packages:
-	   pip install tensorflow==2.5.* jupyter-tensorboard nodejs npm pybind11 gputools stardist numpy>=1.20 pandas pathlib tifffile scikit-tensor-py3 pyopencl
+	   pip install tensorflow==2.5.* pathlib tifffile stardist gputools csbdeep npm pandas
+	   pip install scikit-tensor-py3 --no-deps
 	!!! on Windows, install PyOpenCL from pre-made binary (https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyopencl):
 	   i.e. above, in pip install-command change pyopencl to "path\to\pyopencl.whl"
