@@ -1,4 +1,4 @@
-r"""
+"""
 @version: 1.2.0
 @author: Arto I. Viitanen
 
@@ -21,6 +21,7 @@ from csbdeep.utils.tf import limit_gpu_memory
 from stardist.models import StarDist3D, StarDist2D
 from stardist.utils import gputools_available, fill_label_holes
 from tifffile import TiffFile, imread
+from skimage.segmentation import expand_labels
 
 # from tensorflow.keras.utils import Sequence
 # import tensorflow as tf
@@ -31,7 +32,8 @@ Model = Union[StarDist3D, StarDist2D]
 
 # The lines below search for ImageJ exe-file (newest version) on University computers. The paths/names can be changed.
 try:
-    ij_path = [*pl.Path(r"C:\hyapp").glob("fiji-win64*")][-1].joinpath(r"Fiji.app", "ImageJ-win64.exe")
+    ij_path = '/Applications/Fiji.app'
+    #ij_path = [*pl.Path(r"C:\hyapp").glob("fiji-win64*")][-1].joinpath(r"Fiji.app", "ImageJ-win64.exe")
 except IndexError:
     ij_path = None
 
@@ -39,9 +41,9 @@ except IndexError:
 # ------------------
 PREDICTSD_VARS = {
     # On Windows, give paths as: r'c:\PATH\TO\DIR'
-    'image_path': '/home/exp/images',
-    'label_path': '/home/exp/masks',
-    'output_path': '/home/exp/results',
+    'image_path': '/Users/sarahbluhm/Documents/GitHub/predictSD/test_images',
+    'label_path': '/Users/sarahbluhm/Documents/GitHub/predictSD/test_masks',
+    'output_path': '/Users/sarahbluhm/Documents/GitHub/predictSD/test_results',
 
     # Whether to save label data in LAM-compatible format and folder hierarchy
     # This expects that the images are named in a compatible manner, i.e. "samplegroup_samplename.tif"
@@ -53,7 +55,7 @@ PREDICTSD_VARS = {
 
     # If labels already exist set to True. If False, the labels will be predicted based on microscopy images.
     # Otherwise only result tables will be constructed.
-    'label_existence': False,
+    'label_existence': True,
 
     # ZYX-axes voxel dimensions in microns. Size is by default read from image metadata.
     # KEEP AS None UNLESS SIZE METADATA IS WRONG. Dimensions are given as tuple, i.e. force_voxel_size=(Zdim, Ydim, Xdim)
@@ -69,13 +71,13 @@ PREDICTSD_CONFIG = {
     # GIVE MODEL TO USE:
     # Give model names in tuple, e.g. "sd_models": ("DAPI10x", "GFP10x")
     # Pre-trained 2D StarDist models can be used with '2D_versatile_fluo' (DAPI) and '2D_versatile_he' (H&E)
-    "sd_models": ("GFP10x", "DAPI10x"),
+    "sd_models": ("DAPI10x"),
 
     # Channel position of the channel to predict. Set to None if images have only one channel. Indexing from zero.
     # If multiple channels, the numbers must be given in same order as sd_models, e.g. ("DAPI10x", "GFP10x") with (1, 0)
     # NOTE that the channel positions remain the same even if split to separate images with ImageJ!
     #  -> Array indexing however is changed for Python; either use input images with a single channel or all of them
-    "prediction_chs": (0, 1),      # (1, 0)
+    "prediction_chs": (2),      # (1, 0)
 
     # List of filters to apply to predicted labels. Each tuple must contain 1) index of data or name/model, 2) name of
     # column where filter is applied, 3) filtering value, and 4) 'min' or 'max' to indicate if filtering value is
@@ -544,6 +546,26 @@ class CollectLabelData:
         if self.image_data.is_2d:
             return grouped_voxels.size() * np.nan
         return grouped_voxels.size() * np.prod(self.image_data.voxel_dims)
+    
+    def expand_labels(self, image_data: ImageData, path: Pathlike, expand_distance: float) -> Pathlike:
+        #expand image
+        label_image = image_data.labels.img
+        if not image_data.is_2d:
+            expanded_labels = np.array([expand_labels(label_image[i]) for i in range(label_image.shape[0])])
+        else:       
+            expanded_labels = expand_labels(label_image, distance=expand_distance)
+
+        # save expanded labels
+        image_name = image_data.name
+        file_stem = f'{image_name}_expanded_labels'
+        save_expanded_label = pl.Path(path).joinpath(f'{file_stem}.labels.tif')
+        image_data.image.compatible_save(expanded_labels, str(save_expanded_label))
+
+        return save_expanded_label
+    
+    """
+    def signal_detection()
+    """
 
     def apply_filters(self, filter_list: list, print_no: bool = True, ret: bool = False) -> dict:
         """Filter an output DataFrame based on each label's value in given column.
@@ -662,6 +684,11 @@ class CollectLabelData:
         if kwargs.get("slopes") is not None and kwargs.get("slopes") is True:
             output = output.join(intensities.agg(lambda yax, xax=pxl_distance: __intensity_slope(yax, xax)
                                                  ).rename(lambda x: x.replace("Mean", "Slope"), axis=1))
+        
+       # Save expanded labels to same directory as original labels
+        path_to_expanded_label = self.expand_labels(self.image_data, os.path.dirname(label_file), 1.0)
+        print(path_to_expanded_label)
+
         return output
 
     def get_label_names(self):
