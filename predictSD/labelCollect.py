@@ -547,24 +547,45 @@ class CollectLabelData:
             return grouped_voxels.size() * np.nan
         return grouped_voxels.size() * np.prod(self.image_data.voxel_dims)
     
-    def expand_labels(self, image_data: ImageData, path: Pathlike, expand_distance: float) -> Pathlike:
+    def _expand_labels(self, path: Pathlike, expand_distance: float) -> Pathlike:
         #expand image
-        label_image = image_data.labels.img
-        if not image_data.is_2d:
-            expanded_labels = np.array([expand_labels(label_image[i]) for i in range(label_image.shape[0])])
+        label_image = self.image_data.labels.img
+        if not self.image_data.is_2d:
+            expanded_labels = np.array([expand_labels(label_image[i], distance=expand_distance) for i in range(label_image.shape[0])])
         else:       
             expanded_labels = expand_labels(label_image, distance=expand_distance)
 
-        # save expanded labels
-        image_name = image_data.name
+        # Save expanded labels
+        image_name = self.image_data.name
         file_stem = f'{image_name}_expanded_labels'
         save_expanded_label = pl.Path(path).joinpath(f'{file_stem}.labels.tif')
-        image_data.image.compatible_save(expanded_labels, str(save_expanded_label))
+        self.image_data.image.compatible_save(expanded_labels, str(save_expanded_label))
 
         return save_expanded_label
     
     """
-    def signal_detection()
+    def _signal_detection(self, expanded_voxel_data: pd.DataFrame, detection_method: list[Tuple]):   
+        # Initialize df to store cytosolic signal detection results
+        detection_results = pd.DataFrame(index=expanded_voxel_data.index)
+        detection_results['ID'] = expanded_voxel_data['ID']
+        
+        # Loop through detection_method
+        for channel_info in detection_method:
+            channel, method, threshold = channel_info
+            voxel_data_column = f'Intensity Mean_Ch={channel}'
+
+            # Implement specified detection method
+            if method == "cutoff":
+                detection_column = f'Channel {channel} Cytosolic Signal'
+                detection_results[detection_column] = 0
+                detection_results.loc[expanded_voxel_data[voxel_data_column] >= threshold, detection_column] = 1
+            else:
+                print("No (valid) detection method specified. Cytosolic signals will not be processed.")
+
+        aggregated_results = detection_results.groupby('ID').max().reset_index()
+        
+        # Return a pandas df with cytosolic signals
+        return aggregated_results
     """
 
     def apply_filters(self, filter_list: list, print_no: bool = True, ret: bool = False) -> dict:
@@ -685,9 +706,12 @@ class CollectLabelData:
             output = output.join(intensities.agg(lambda yax, xax=pxl_distance: __intensity_slope(yax, xax)
                                                  ).rename(lambda x: x.replace("Mean", "Slope"), axis=1))
         
-       # Save expanded labels to same directory as original labels
-        path_to_expanded_label = self.expand_labels(self.image_data, os.path.dirname(label_file), 1.0)
-        print(path_to_expanded_label)
+        # Save expanded labels to same directory as original labels
+        path_to_expanded_label = self._expand_labels(os.path.dirname(label_file), 1.0)
+        # Retrieve coordinates and intensities of voxels inside expanded labels
+        # expanded_voxel_data = self.image_data.labelled_voxels(item=path_to_expanded_label)
+        # Analyze cytosolic signal. Parameters are expanded_voxel_data and a list of tuples containing (channel to analyze, detection method, detection method threshold).
+        # signal = self._signal_detection(expanded_voxel_data, [(0, "cutoff", 50)])
 
         return output
 
