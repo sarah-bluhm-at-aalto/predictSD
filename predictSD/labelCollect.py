@@ -557,9 +557,9 @@ class CollectLabelData:
 
         # Save expanded labels
         image_name = self.image_data.name
-        file_stem = f'{image_name}_expanded_labels'
-        save_expanded_label = pl.Path(path).joinpath(f'{file_stem}.labels.tif')
-        self.image_data.image.compatible_save(expanded_labels, str(save_expanded_label))
+        file_stem = f'{image_name}_expanded'
+        save_expanded_label = pl.Path(path,'expanded').mkdir(parents=True, exist_ok=True)
+        self.image_data.image.compatible_save(expanded_labels, str(pl.Path(path,'expanded', f'{file_stem}.labels.tif')))
 
         return save_expanded_label
     
