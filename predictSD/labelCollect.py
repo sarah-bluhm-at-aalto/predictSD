@@ -86,6 +86,22 @@ PREDICTSD_CONFIG = {
     #  -> filters all labels with Z-slice max area less than 15 and DAPI10x labels with volume > 750
     "filters": [('all', 'Area', 5.0, 'min')],  # ('DAPI10x', 'Intensity Mean_Ch=1', 150, 'min')],
 
+    # Evaluate cytosolic signals?
+    "cytosolic_signal": True,
+
+    # Settings for expanding the nuclei labels
+    # Define the size of the cytosolic area as the % increase in radius compared to the nucleus
+    # E.g. If the radii of cells are ~30% larger than the radii of the nuclei, then write 0.3
+    "radius_expansion": 5,
+
+    # Define the procedure for searching for cytosolic signals
+    # A. Provide the channels to check for cytosolic signals. E.g. To check the DAPI signal in channel 2, write 2.
+    # B. Give the detection method. Only a single choice is available for now, which is "cutoff"
+    # C. Write the critical detection value.
+        # For "cutoff" method: intensities >= critical value are counted as positive cytosolic signals.
+    # Give A, B, & C as a [list] of (tuples). E.g. for channels 2 and 0, you could write [(2, "cutoff", 50), (0, "cutoff", 100)]
+    "detect": [(0, "cutoff", 60)],
+
     # PREDICTION VARIABLES ("None" for default values of training):
     # --------------------
     # These variables are the primary way to influence label prediction and set values for ALL used models!
@@ -564,7 +580,7 @@ class CollectLabelData:
         return save_expanded_label
     
     
-    def _signal_detection(self, expanded_voxel_data: pd.DataFrame, detection_method: list[Tuple]):   
+    def _signal_detection(self, expanded_voxel_data: pd.DataFrame, detection_method: list[Tuple[int, str, float]]):   
         # Initialize df to store cytosolic signal detection results
         detection_results = pd.DataFrame(index=expanded_voxel_data.index)
         detection_results['ID'] = expanded_voxel_data['ID']
@@ -703,14 +719,17 @@ class CollectLabelData:
             output = output.join(intensities.agg(lambda yax, xax=pxl_distance: __intensity_slope(yax, xax)
                                                  ).rename(lambda x: x.replace("Mean", "Slope"), axis=1))
         
-        # Save expanded labels to same directory as original labels
-        path_to_expanded_label = self._expand_labels(os.path.dirname(label_file), 1.0)
+        # If cytosolic signal detection desired:
+        if kwargs['cytosolic_signal']:
+            # Save expanded labels to same directory as original labels
+            path_to_expanded_label = self._expand_labels(os.path.dirname(label_file), kwargs['radius_expansion'])
         # Retrieve coordinates and intensities of voxels inside expanded labels
         expanded_voxel_data = self.image_data.labelled_voxels(item=path_to_expanded_label)
         # Analyze cytosolic signal. Parameters are expanded_voxel_data and a list of tuples containing (channel to analyze, detection method, detection method threshold).
-        signal = self._signal_detection(expanded_voxel_data, [(0, "cutoff", 50)])
+        signal = self._signal_detection(expanded_voxel_data, kwargs['detect'])
         # Add detection results (0 for negative, 1 for positive) to output
         output = pd.merge(output, signal, on = 'ID')
+        
         return output
 
     def get_label_names(self):
@@ -1353,7 +1372,7 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
         out_path: str
             Path to results-folder. Data tables of label information will be saved here.
         prediction_conf: dict
-            Key/value-pairs to replace PredictObjects.default_config -values that are used for StarDist prediction.
+            Key/value-pairs to replace PredictObjects.default_config values that are used for StarDist prediction.
         to_microns: bool
             Whether to transform output from pixel coordinate system to micrometers.
         voxel_dims: None, tuple
@@ -1393,7 +1412,8 @@ def collect_labels(img_path: str, lbl_path: str, out_path: str, prediction_conf:
         print("\nCollecting label data.")
         label_data = CollectLabelData(images, convert_to_micron=to_microns)
         label_data(out_path=out_path, lam_compatible=lam_out, filters=prediction_conf.get('filters'), save_data=True,
-                   slopes=slopes)
+                   slopes=slopes, cytosolic_signal=prediction_conf.get("cytosolic_signal", False),
+                   radius_expansion = prediction_conf.get('radius_expansion'), detect = prediction_conf.get('detect'))
         # Print description of collected data
         for data in label_data.output:
             df = data[2]
