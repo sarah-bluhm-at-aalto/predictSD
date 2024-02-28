@@ -556,14 +556,14 @@ class CollectLabelData:
             expanded_labels = expand_labels(label_image, distance=expand_distance)
 
         # Save expanded labels
-        image_name = self.image_data.name
-        file_stem = f'{image_name}_expanded'
-        save_expanded_label = pl.Path(path,'expanded').mkdir(parents=True, exist_ok=True)
-        self.image_data.image.compatible_save(expanded_labels, str(pl.Path(path,'expanded', f'{file_stem}.labels.tif')))
+        expanded_image_name = f'{self.image_data.name}_{self.image_data.labels.label_name}_expanded'
+        pl.Path(path, 'expanded').mkdir(parents=True, exist_ok=True)
+        save_expanded_label = pl.Path(path, 'expanded', f'{expanded_image_name}.labels.tif')
+        self.image_data.image.compatible_save(expanded_labels, str(save_expanded_label))
 
         return save_expanded_label
     
-    """
+    
     def _signal_detection(self, expanded_voxel_data: pd.DataFrame, detection_method: list[Tuple]):   
         # Initialize df to store cytosolic signal detection results
         detection_results = pd.DataFrame(index=expanded_voxel_data.index)
@@ -581,12 +581,9 @@ class CollectLabelData:
                 detection_results.loc[expanded_voxel_data[voxel_data_column] >= threshold, detection_column] = 1
             else:
                 print("No (valid) detection method specified. Cytosolic signals will not be processed.")
-
-        aggregated_results = detection_results.groupby('ID').max().reset_index()
-        
+        aggregated_results = detection_results.groupby('ID').max()
         # Return a pandas df with cytosolic signals
         return aggregated_results
-    """
 
     def apply_filters(self, filter_list: list, print_no: bool = True, ret: bool = False) -> dict:
         """Filter an output DataFrame based on each label's value in given column.
@@ -709,10 +706,11 @@ class CollectLabelData:
         # Save expanded labels to same directory as original labels
         path_to_expanded_label = self._expand_labels(os.path.dirname(label_file), 1.0)
         # Retrieve coordinates and intensities of voxels inside expanded labels
-        # expanded_voxel_data = self.image_data.labelled_voxels(item=path_to_expanded_label)
+        expanded_voxel_data = self.image_data.labelled_voxels(item=path_to_expanded_label)
         # Analyze cytosolic signal. Parameters are expanded_voxel_data and a list of tuples containing (channel to analyze, detection method, detection method threshold).
-        # signal = self._signal_detection(expanded_voxel_data, [(0, "cutoff", 50)])
-
+        signal = self._signal_detection(expanded_voxel_data, [(0, "cutoff", 50)])
+        # Add detection results (0 for negative, 1 for positive) to output
+        output = pd.merge(output, signal, on = 'ID')
         return output
 
     def get_label_names(self):
