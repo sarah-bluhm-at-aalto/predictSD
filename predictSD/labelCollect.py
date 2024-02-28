@@ -90,8 +90,7 @@ PREDICTSD_CONFIG = {
     "cytosolic_signal": True,
 
     # Settings for expanding the nuclei labels
-    # Define the size of the cytosolic area as the % increase in radius compared to the nucleus
-    # E.g. If the radii of cells are ~30% larger than the radii of the nuclei, then write 0.3
+    # Define the size of the cytosolic area as the number of pixels by which the nucleus should be expanded.
     "radius_expansion": 5,
 
     # Define the procedure for searching for cytosolic signals
@@ -120,7 +119,7 @@ PREDICTSD_CONFIG = {
     "memory_limit": (6000, 0.8),
 
     # Set True if predicting from large images in order to split the image into blocks.
-    "predict_big": True,
+    "predict_big": False,
 
     # Splitting of image into segments along z, y, and x axes. Long_div and short_div split the longer and shorter axis
     # of X and Y axes, respectively. The given number indicates how many splits are performed on the given axis.
@@ -563,8 +562,8 @@ class CollectLabelData:
             return grouped_voxels.size() * np.nan
         return grouped_voxels.size() * np.prod(self.image_data.voxel_dims)
     
-    def _expand_labels(self, path: Pathlike, expand_distance: float) -> Pathlike:
-        #expand image
+    def _expand_labels(self, path: Pathlike, Area: np.array, expand_distance: int) -> Pathlike:
+        # Expand image labels
         label_image = self.image_data.labels.img
         if not self.image_data.is_2d:
             expanded_labels = np.array([expand_labels(label_image[i], distance=expand_distance) for i in range(label_image.shape[0])])
@@ -579,8 +578,7 @@ class CollectLabelData:
 
         return save_expanded_label
     
-    
-    def _signal_detection(self, expanded_voxel_data: pd.DataFrame, detection_method: list[Tuple[int, str, float]]):   
+    def _signal_detection(self, expanded_voxel_data: pd.DataFrame, detection_method: list[Tuple[int, str, float]]) -> pd.Series:   
         # Initialize df to store cytosolic signal detection results
         detection_results = pd.DataFrame(index=expanded_voxel_data.index)
         detection_results['ID'] = expanded_voxel_data['ID']
@@ -699,11 +697,11 @@ class CollectLabelData:
         # Collapse individual voxels into label-specific averages.
         output = voxel_sorted.groupby("ID").agg(np.nanmean)
 
+        Volume      = self._get_volumes(voxel_data.loc[:, ['ID'] + list(colmp.keys())])
+        Area        = self._get_area_maximums(voxel_data)
         # Calculate other variables of interest
-        output = output.assign(
-            Volume      = self._get_volumes(voxel_data.loc[:, ['ID'] + list(colmp.keys())]),
-            Area        = self._get_area_maximums(voxel_data)
-        )
+        output = output.assign(Volume = Volume, Area = Area)
+
         # Find distance to each voxel from its' label's centroid (for intensity slope)
         coords = voxel_sorted.loc[:, ['ID', *colmp.keys()]].groupby("ID")
         pxl_distance = np.sqrt(coords.transform(lambda x: (x - x.mean(skipna=True))**2).sum(axis=1))
@@ -722,14 +720,14 @@ class CollectLabelData:
         # If cytosolic signal detection desired:
         if kwargs['cytosolic_signal']:
             # Save expanded labels to same directory as original labels
-            path_to_expanded_label = self._expand_labels(os.path.dirname(label_file), kwargs['radius_expansion'])
+            path_to_expanded_label = self._expand_labels(os.path.dirname(label_file), Area, kwargs['radius_expansion'])
         # Retrieve coordinates and intensities of voxels inside expanded labels
         expanded_voxel_data = self.image_data.labelled_voxels(item=path_to_expanded_label)
         # Analyze cytosolic signal. Parameters are expanded_voxel_data and a list of tuples containing (channel to analyze, detection method, detection method threshold).
         signal = self._signal_detection(expanded_voxel_data, kwargs['detect'])
         # Add detection results (0 for negative, 1 for positive) to output
         output = pd.merge(output, signal, on = 'ID')
-        
+
         return output
 
     def get_label_names(self):
