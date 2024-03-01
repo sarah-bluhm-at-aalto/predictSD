@@ -567,39 +567,13 @@ class CollectLabelData:
     
     def _expand_labels(self, path: Pathlike, Area: np.array, expand_distance: float) -> Pathlike:
         label_image = self.image_data.labels.img
-        expanded_labels = np.zeros(label_image.shape)
 
-        if not self.image_data.is_2d:
-            for i in range(label_image.shape[0]):
-                label_layer = label_image[i]
-
-                # Create inverted boolean array from labels
-                inverted_label_layer = np.logical_not(label_layer.astype(bool)).astype(int)
-
-                # Make feature transform and feature map from inverted array
-                feature_transform, feature_map = ndimage.distance_transform_edt(inverted_label_layer, return_indices = True)
-
-                # Replace original labels with a percentage of the objects' approximate radii
-                labels = np.unique(label_layer)[np.unique(label_layer) > 0]
-                area_values = np.sqrt(map_array(label_layer, labels, Area.loc[labels].values) / np.pi) * expand_distance
-
-                # Convert multi-array indices to flattened indices
-                flattened_feature_map = np.ravel_multi_index(feature_map, dims=label_layer.shape)
-
-                # Map object indices to values dependent on their radii
-                adaptive_feature_transform = map_array(flattened_feature_map, np.arange(np.prod(area_values.shape)), area_values.flatten())
-
-                # Create a landscape that depends on the radii of the nearby objects
-                landscape = feature_transform - adaptive_feature_transform.reshape(label_layer.shape)
-
-                # Make mask that sets watershed height to < 1
-                mask = landscape < 1
-                
-                # Perform watershed
-                expanded_labels[i] = watershed(landscape, markers = label_layer, mask = mask)
+        if self.image_data.is_2d:
+            expanded_labels = self._watershed_expand(label_image, Area, expand_distance)
                 
         else:
-            print('Skip for now.')
+            expanded_labels_slice = [self._watershed_expand(label_image[i], Area, expand_distance) for i in range(label_image.shape[0])]
+            expanded_labels = np.stack(expanded_labels_slice, axis=0)
 
         # Save expanded labels
         expanded_image_name = f'{self.image_data.name}_{self.image_data.labels.label_name}_expanded'
@@ -608,6 +582,31 @@ class CollectLabelData:
         self.image_data.image.compatible_save(expanded_labels, str(save_expanded_label))
 
         return save_expanded_label
+    
+    def _watershed_expand(self, label_layer: np.array, Area: np.array, expand_distance: float):
+        # Create inverted boolean array from labels
+        inverted_label_layer = np.logical_not(label_layer.astype(bool)).astype(int)
+
+        # Make feature transform and feature map from inverted array
+        feature_transform, feature_map = ndimage.distance_transform_edt(inverted_label_layer, return_indices = True)
+
+        # Replace original labels with a percentage of the objects' approximate radii
+        labels = np.unique(label_layer)[np.unique(label_layer) > 0]
+        area_values = np.sqrt(map_array(label_layer, labels, Area.loc[labels].values) / np.pi) * expand_distance
+
+        # Convert multi-array indices to flattened indices
+        flattened_feature_map = np.ravel_multi_index(feature_map, dims=label_layer.shape)
+
+        # Map object indices to values dependent on their radii
+        adaptive_feature_transform = map_array(flattened_feature_map, np.arange(np.prod(area_values.shape)), area_values.flatten())
+
+        # Create a landscape that depends on the radii of the nearby objects
+        landscape = feature_transform - adaptive_feature_transform.reshape(label_layer.shape)
+
+        # Make mask that sets watershed height to < 1
+        mask = landscape < 1
+
+        return watershed(landscape, markers = label_layer, mask = mask)
     
     def _signal_detection(self, expanded_voxel_data: pd.DataFrame, detection_method: list[Tuple[int, str, float]]) -> pd.Series:   
         # Initialize df to store cytosolic signal detection results
