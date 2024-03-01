@@ -566,10 +566,10 @@ class CollectLabelData:
         return grouped_voxels.size() * np.prod(self.image_data.voxel_dims)
     
     def _expand_labels(self, path: Pathlike, Area: np.array, expand_distance: float) -> Pathlike:
-        label_image = self.image_data.labels.img
+        label_image = self.image_data.labels.img.astype(int)
 
         if self.image_data.is_2d:
-            expanded_labels = self._watershed_expand(label_image, Area, expand_distance)
+            expanded_labels = self._watershed_expand(np.squeeze(label_image), Area, expand_distance)
                 
         else:
             expanded_labels_slice = [self._watershed_expand(label_image[i], Area, expand_distance) for i in range(label_image.shape[0])]
@@ -595,7 +595,7 @@ class CollectLabelData:
         area_values = np.sqrt(map_array(label_layer, labels, Area.loc[labels].values) / np.pi) * expand_distance
 
         # Convert multi-array indices to flattened indices
-        flattened_feature_map = np.ravel_multi_index(feature_map, dims=label_layer.shape)
+        flattened_feature_map = np.ravel_multi_index(np.where(feature_map == -1, 0, feature_map), dims=label_layer.shape)
 
         # Map object indices to values dependent on their radii
         adaptive_feature_transform = map_array(flattened_feature_map, np.arange(np.prod(area_values.shape)), area_values.flatten())
