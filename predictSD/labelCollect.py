@@ -734,7 +734,7 @@ class CollectLabelData:
 
         # Find distance to each voxel from its' label's centroid (for intensity slope)
         coords = voxel_sorted.loc[:, ['ID', *colmp.keys()]].groupby("ID")
-        pxl_distance = np.sqrt(coords.transform(lambda x: (x - x.mean(skipna=True))**2).sum(axis=1))
+        # pxl_distance = np.sqrt(coords.transform(lambda x: (x - x.mean(skipna=True))**2).sum(axis=1))
 
         # Get intensities and calculate related variables for all image channels
         intensities = voxel_sorted.loc[:, voxel_sorted.columns.difference(['X', 'Y', 'Z'])].groupby("ID")
