@@ -21,7 +21,9 @@ from csbdeep.utils.tf import limit_gpu_memory
 from stardist.models import StarDist3D, StarDist2D
 from stardist.utils import gputools_available, fill_label_holes
 from tifffile import TiffFile, imread
-from skimage.segmentation import expand_labels
+from skimage.segmentation import watershed
+from skimage.util import map_array
+from scipy import ndimage
 
 # from tensorflow.keras.utils import Sequence
 # import tensorflow as tf
@@ -90,8 +92,9 @@ PREDICTSD_CONFIG = {
     "cytosolic_signal": True,
 
     # Settings for expanding the nuclei labels
-    # Define the size of the cytosolic area as the number of pixels by which the nucleus should be expanded.
-    "radius_expansion": 5,
+    # Define the size of the cytosolic area as the % increase in radius compared to the nucleus
+    # E.g. If the radii of cells are ~30% larger than the radii of the nuclei, then write 0.3
+    "radius_expansion": 1.0,
 
     # Define the procedure for searching for cytosolic signals
     # A. Provide the channels to check for cytosolic signals. E.g. To check the DAPI signal in channel 2, write 2.
@@ -99,7 +102,7 @@ PREDICTSD_CONFIG = {
     # C. Write the critical detection value.
         # For "cutoff" method: intensities >= critical value are counted as positive cytosolic signals.
     # Give A, B, & C as a [list] of (tuples). E.g. for channels 2 and 0, you could write [(2, "cutoff", 50), (0, "cutoff", 100)]
-    "detect": [(0, "cutoff", 60)],
+    "detect": [(1, "cutoff", 55)],
 
     # PREDICTION VARIABLES ("None" for default values of training):
     # --------------------
@@ -562,13 +565,41 @@ class CollectLabelData:
             return grouped_voxels.size() * np.nan
         return grouped_voxels.size() * np.prod(self.image_data.voxel_dims)
     
-    def _expand_labels(self, path: Pathlike, Area: np.array, expand_distance: int) -> Pathlike:
-        # Expand image labels
+    def _expand_labels(self, path: Pathlike, Area: np.array, expand_distance: float) -> Pathlike:
         label_image = self.image_data.labels.img
+        expanded_labels = np.zeros(label_image.shape)
+
         if not self.image_data.is_2d:
-            expanded_labels = np.array([expand_labels(label_image[i], distance=expand_distance) for i in range(label_image.shape[0])])
-        else:       
-            expanded_labels = expand_labels(label_image, distance=expand_distance)
+            for i in range(label_image.shape[0]):
+                label_layer = label_image[i]
+
+                # Create inverted boolean array from labels
+                inverted_label_layer = np.logical_not(label_layer.astype(bool)).astype(int)
+
+                # Make feature transform and feature map from inverted array
+                feature_transform, feature_map = ndimage.distance_transform_edt(inverted_label_layer, return_indices = True)
+
+                # Replace original labels with a percentage of the objects' approximate radii
+                labels = np.unique(label_layer)[np.unique(label_layer) > 0]
+                area_values = np.sqrt(map_array(label_layer, labels, Area.loc[labels].values) / np.pi) * expand_distance
+
+                # Convert multi-array indices to flattened indices
+                flattened_feature_map = np.ravel_multi_index(feature_map, dims=label_layer.shape)
+
+                # Map object indices to values dependent on their radii
+                adaptive_feature_transform = map_array(flattened_feature_map, np.arange(np.prod(area_values.shape)), area_values.flatten())
+
+                # Create a landscape that depends on the radii of the nearby objects
+                landscape = feature_transform - adaptive_feature_transform.reshape(label_layer.shape)
+
+                # Make mask that sets watershed height to < 1
+                mask = landscape < 1
+                
+                # Perform watershed
+                expanded_labels[i] = watershed(landscape, markers = label_layer, mask = mask)
+                
+        else:
+            print('Skip for now.')
 
         # Save expanded labels
         expanded_image_name = f'{self.image_data.name}_{self.image_data.labels.label_name}_expanded'
@@ -720,13 +751,13 @@ class CollectLabelData:
         # If cytosolic signal detection desired:
         if kwargs['cytosolic_signal']:
             # Save expanded labels to same directory as original labels
-            path_to_expanded_label = self._expand_labels(os.path.dirname(label_file), Area, kwargs['radius_expansion'])
-        # Retrieve coordinates and intensities of voxels inside expanded labels
-        expanded_voxel_data = self.image_data.labelled_voxels(item=path_to_expanded_label)
-        # Analyze cytosolic signal. Parameters are expanded_voxel_data and a list of tuples containing (channel to analyze, detection method, detection method threshold).
-        signal = self._signal_detection(expanded_voxel_data, kwargs['detect'])
-        # Add detection results (0 for negative, 1 for positive) to output
-        output = pd.merge(output, signal, on = 'ID')
+            path_to_expanded_label = self._expand_labels(os.path.dirname(label_file), Area, float(kwargs['radius_expansion']))
+            # Retrieve coordinates and intensities of voxels inside expanded labels
+            expanded_voxel_data = self.image_data.labelled_voxels(item=path_to_expanded_label)
+            # Analyze cytosolic signal. Parameters are expanded_voxel_data and a list of tuples containing (channel to analyze, detection method, detection method threshold).
+            signal = self._signal_detection(expanded_voxel_data, kwargs['detect'])
+            # Add detection results (0 for negative, 1 for positive) to output
+            output = pd.merge(output, signal, on = 'ID')
 
         return output
 
