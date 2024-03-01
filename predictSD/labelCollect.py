@@ -721,12 +721,12 @@ class CollectLabelData:
         if kwargs['cytosolic_signal']:
             # Save expanded labels to same directory as original labels
             path_to_expanded_label = self._expand_labels(os.path.dirname(label_file), Area, kwargs['radius_expansion'])
-        # Retrieve coordinates and intensities of voxels inside expanded labels
-        expanded_voxel_data = self.image_data.labelled_voxels(item=path_to_expanded_label)
-        # Analyze cytosolic signal. Parameters are expanded_voxel_data and a list of tuples containing (channel to analyze, detection method, detection method threshold).
-        signal = self._signal_detection(expanded_voxel_data, kwargs['detect'])
-        # Add detection results (0 for negative, 1 for positive) to output
-        output = pd.merge(output, signal, on = 'ID')
+            # Retrieve coordinates and intensities of voxels inside expanded labels
+            expanded_voxel_data = self.image_data.labelled_voxels(item=path_to_expanded_label)
+            # Analyze cytosolic signal. Parameters are expanded_voxel_data and a list of tuples containing (channel to analyze, detection method, detection method threshold).
+            signal = self._signal_detection(expanded_voxel_data, kwargs['detect'])
+            # Add detection results (0 for negative, 1 for positive) to output
+            output = pd.merge(output, signal, on = 'ID')
 
         return output
 
